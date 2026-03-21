@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "trustbeat"
+version = "0.1.0"
+description = "TrustBeat SDK — qualified timestamping and Merkle anchoring"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dependencies = []  # zero runtime dependencies — stdlib only
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7",     # optional — tests also run with stdlib unittest
+    "pytest-cov",
+]
+
+[project.urls]
+Homepage    = "https://trustbeat.eu"
+Repository  = "https://github.com/trustbeat/trustbeat-python"
+Issues      = "https://github.com/trustbeat/trustbeat-python/issues"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.unittest]
+start-dir = "tests"
+
+[tool.hatch.build.targets.wheel]
+packages = ["trustbeat"]
