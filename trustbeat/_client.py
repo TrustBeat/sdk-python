@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import time
 import urllib.error
 import urllib.request
@@ -49,6 +51,7 @@ class TrustBeat:
         sha256_hex: str,
         *,
         client_ref: str | None = None,
+        description: str | None = None,
         callback_url: str | None = None,
     ) -> AnchorJob:
         """
@@ -61,15 +64,82 @@ class TrustBeat:
 
         :param sha256_hex: Lowercase hex-encoded SHA-256 digest of the content.
         :param client_ref: Optional reference tag stored with the anchor.
+        :param description: Optional human-readable description.
         :param callback_url: Optional webhook URL called when anchoring completes.
         """
         body: dict[str, Any] = {"hash": sha256_hex, "hash_algorithm": "sha256"}
         if client_ref is not None:
             body["client_ref"] = client_ref
+        if description is not None:
+            body["description"] = description
         if callback_url is not None:
             body["callback_url"] = callback_url
         data = self._request("POST", "/v1/anchor", body)
         return _parse_anchor_job(data)
+
+    def anchor_file(
+        self,
+        path: str | os.PathLike,
+        *,
+        client_ref: str | None = None,
+        description: str | None = None,
+        callback_url: str | None = None,
+    ) -> AnchorJob:
+        """
+        Hash a local file with SHA-256 and submit it for anchoring.
+
+        The file is read in 64 KB chunks and hashed entirely in memory —
+        it is **never uploaded**. Only the 64-character hex digest is sent
+        to the TrustBeat API.
+
+        ``description`` defaults to the filename if not provided.
+
+        :param path: Path to the file to anchor.
+        :param client_ref: Optional reference tag stored with the anchor.
+        :param description: Human-readable label; defaults to the filename.
+        :param callback_url: Optional webhook URL called when anchoring completes.
+        """
+        path = os.fspath(path)
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                h.update(chunk)
+        sha256_hex = h.hexdigest()
+        if description is None:
+            description = os.path.basename(path)
+        return self.anchor(
+            sha256_hex,
+            client_ref=client_ref,
+            description=description,
+            callback_url=callback_url,
+        )
+
+    def anchor_file_wait(
+        self,
+        path: str | os.PathLike,
+        *,
+        client_ref: str | None = None,
+        description: str | None = None,
+        callback_url: str | None = None,
+        timeout: float = 660.0,
+        poll_interval: float = 10.0,
+    ) -> AnchorProof:
+        """
+        Hash a file, submit for anchoring, and block until the proof is ready.
+
+        Convenience wrapper around :meth:`anchor_file` + :meth:`anchor_wait`.
+
+        :param path: Path to the file to anchor.
+        :param timeout: Maximum seconds to wait for proof (default 660 = 11 min).
+        :param poll_interval: Seconds between polls (default 10).
+        """
+        job = self.anchor_file(
+            path,
+            client_ref=client_ref,
+            description=description,
+            callback_url=callback_url,
+        )
+        return self.anchor_wait(job.id, timeout=timeout, poll_interval=poll_interval)
 
     def anchor_batch(
         self,

@@ -8,6 +8,8 @@ these tests run fully offline.
 import base64
 import hashlib
 import json
+import os
+import tempfile
 import unittest
 import urllib.error
 from io import BytesIO
@@ -223,6 +225,90 @@ class TestErrorHandling(unittest.TestCase):
     def test_empty_api_key_raises_value_error(self):
         with self.assertRaises(ValueError):
             TrustBeat(api_key="")
+
+
+# ── anchor_file() ─────────────────────────────────────────────────────────────
+
+class TestAnchorFile(unittest.TestCase):
+
+    def _write_tmpfile(self, content: bytes) -> str:
+        fd, path = tempfile.mkstemp()
+        try:
+            os.write(fd, content)
+        finally:
+            os.close(fd)
+        return path
+
+    @patch("urllib.request.urlopen")
+    def test_anchor_file_hashes_file_and_submits(self, mock_urlopen):
+        content = b"hello trustbeat"
+        expected_hash = hashlib.sha256(content).hexdigest()
+        mock_urlopen.return_value = _fake_response(_anchor_accepted_payload("track-f1"))
+
+        path = self._write_tmpfile(content)
+        try:
+            job = TrustBeat(api_key="tb_live_test").anchor_file(path)
+        finally:
+            os.unlink(path)
+
+        self.assertEqual("track-f1", job.id)
+        body = json.loads(mock_urlopen.call_args[0][0].data)
+        self.assertEqual(expected_hash, body["hash"])
+
+    @patch("urllib.request.urlopen")
+    def test_anchor_file_description_defaults_to_filename(self, mock_urlopen):
+        mock_urlopen.return_value = _fake_response(_anchor_accepted_payload())
+
+        path = self._write_tmpfile(b"data")
+        try:
+            TrustBeat(api_key="tb_live_test").anchor_file(path)
+        finally:
+            os.unlink(path)
+
+        body = json.loads(mock_urlopen.call_args[0][0].data)
+        self.assertEqual(os.path.basename(path), body["description"])
+
+    @patch("urllib.request.urlopen")
+    def test_anchor_file_custom_description_overrides_filename(self, mock_urlopen):
+        mock_urlopen.return_value = _fake_response(_anchor_accepted_payload())
+
+        path = self._write_tmpfile(b"data")
+        try:
+            TrustBeat(api_key="tb_live_test").anchor_file(path, description="my-doc")
+        finally:
+            os.unlink(path)
+
+        body = json.loads(mock_urlopen.call_args[0][0].data)
+        self.assertEqual("my-doc", body["description"])
+
+    @patch("urllib.request.urlopen")
+    def test_anchor_file_client_ref_forwarded(self, mock_urlopen):
+        mock_urlopen.return_value = _fake_response(_anchor_accepted_payload())
+
+        path = self._write_tmpfile(b"data")
+        try:
+            TrustBeat(api_key="tb_live_test").anchor_file(path, client_ref="ref-99")
+        finally:
+            os.unlink(path)
+
+        body = json.loads(mock_urlopen.call_args[0][0].data)
+        self.assertEqual("ref-99", body["client_ref"])
+
+    @patch("urllib.request.urlopen")
+    def test_anchor_file_same_hash_as_manual(self, mock_urlopen):
+        """anchor_file() must produce the same hash as hashlib.sha256()."""
+        content = b"deterministic content 42"
+        expected = hashlib.sha256(content).hexdigest()
+        mock_urlopen.return_value = _fake_response(_anchor_accepted_payload())
+
+        path = self._write_tmpfile(content)
+        try:
+            TrustBeat(api_key="tb_live_test").anchor_file(path)
+        finally:
+            os.unlink(path)
+
+        body = json.loads(mock_urlopen.call_args[0][0].data)
+        self.assertEqual(expected, body["hash"])
 
 
 if __name__ == "__main__":
