@@ -1,0 +1,48 @@
+# TrustBeat Python SDK
+
+Qualified electronic timestamps and Merkle anchoring — eIDAS-compliant, over a simple API.
+
+## Install
+
+```bash
+pip install trustbeat
+```
+
+## Quickstart
+
+```python
+from trustbeat import TrustBeat
+
+tb = TrustBeat(api_key="tb_live_...")
+
+# Anchor a file (SHA-256 computed locally, file never leaves your machine)
+proof = tb.anchor_file("contract.pdf")
+print(proof.id)           # tracking ID
+print(proof.anchored_at)  # ISO 8601 timestamp
+print(proof.merkle_root)  # Merkle root of the batch
+
+# Verify locally — no network call
+assert tb.verify(proof)
+
+# Anchor a raw SHA-256 hash
+job = tb.anchor("e3b0c44298fc1c149afb4c8996fb92427ae41e4649b934ca495991b7852b855")
+proof = tb.anchor_wait(job.id)  # blocks up to 11 min
+
+# Direct qualified timestamp (1 credit, instant)
+ts = tb.timestamp("e3b0c44298fc1c149afb4c8996fb92427ae41e4649b934ca495991b7852b855")
+with open("timestamp.tsr", "wb") as f:
+    f.write(ts.token)  # RFC 3161 DER token
+```
+
+## Requirements
+
+- Python 3.9+
+- Zero runtime dependencies (stdlib only)
+
+## Documentation
+
+Full API reference and guides at [trustbeat.eu/docs](https://trustbeat.eu/docs)
+
+## License
+
+MIT — see [LICENSE](LICENSE)
