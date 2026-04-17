@@ -271,6 +271,10 @@ class TrustBeat:
                 **({"model_version": metadata.model_version} if metadata.model_version else {}),
                 **({"operator_id": metadata.operator_id} if metadata.operator_id else {}),
                 **({"deployment_env": metadata.deployment_env} if metadata.deployment_env else {}),
+                **({"external_ref": metadata.external_ref} if metadata.external_ref else {}),
+                **({"decision_outcome": metadata.decision_outcome} if metadata.decision_outcome else {}),
+                **({"model_artifact_hash": metadata.model_artifact_hash} if metadata.model_artifact_hash else {}),
+                **({"data_subject_category": metadata.data_subject_category} if metadata.data_subject_category else {}),
             },
         }
         if callback_url is not None:

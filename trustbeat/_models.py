@@ -97,6 +97,11 @@ class AiDecisionMetadata:
     model_version: str | None = None
     operator_id: str | None = None
     deployment_env: str | None = None  # "production", "staging", "testing"
+    # Art. 12 traceability fields — optional, recommended for full compliance
+    external_ref: str | None = None           # operator's own case/record ID
+    decision_outcome: str | None = None       # semantic result, e.g. "rejected"
+    model_artifact_hash: str | None = None    # SHA-256 of deployed model weights
+    data_subject_category: str | None = None  # e.g. "job_applicant", "credit_applicant"
 
 
 @dataclass
@@ -192,6 +197,10 @@ def _parse_ai_decision_proof(data: dict) -> AiDecisionProof:
         model_version=data["metadata"].get("model_version"),
         operator_id=data["metadata"].get("operator_id"),
         deployment_env=data["metadata"].get("deployment_env"),
+        external_ref=data["metadata"].get("external_ref"),
+        decision_outcome=data["metadata"].get("decision_outcome"),
+        model_artifact_hash=data["metadata"].get("model_artifact_hash"),
+        data_subject_category=data["metadata"].get("data_subject_category"),
     )
     proof = _parse_proof(data["proof"]) if data.get("proof") else None
     return AiDecisionProof(
