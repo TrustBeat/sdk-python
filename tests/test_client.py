@@ -15,7 +15,8 @@ import urllib.error
 from io import BytesIO
 from unittest.mock import MagicMock, patch
 
-from trustbeat import TrustBeat, AnchorJob, AnchorProof
+from trustbeat import TrustBeat, AnchorJob, AnchorProof, AiDecisionJob, AiDecisionProof
+from trustbeat._models import AiDecisionMetadata, AiTimeEnvelope
 from trustbeat._exceptions import AuthError, NotFoundError, QuotaError, RateLimitError, TrustBeatError
 
 
@@ -309,6 +310,125 @@ class TestAnchorFile(unittest.TestCase):
 
         body = json.loads(mock_urlopen.call_args[0][0].data)
         self.assertEqual(expected, body["hash"])
+
+
+# ── anchor_ai_decision() ─────────────────────────────────────────────────────
+
+def _ai_meta():
+    return AiDecisionMetadata(
+        model_id="test-model-v1",
+        system_name="cv-screening",
+        risk_category="employment",
+        decision_type="classification",
+        human_oversight=True,
+        time_envelope=AiTimeEnvelope("2026-04-15T10:00:00Z", "2026-04-15T10:00:01Z"),
+    )
+
+def _ai_job_payload(tracking_id: str = "ai-track-1") -> dict:
+    return {
+        "id": tracking_id,
+        "input_hash": "a" * 64,
+        "output_hash": "b" * 64,
+        "combined_hash": "c" * 64,
+        "status": "pending",
+        "submitted_at": "2026-04-15T10:00:00Z",
+        "overage": False,
+    }
+
+def _ai_proof_payload(tracking_id: str = "ai-track-1") -> dict:
+    leaf  = hashlib.sha256(b"leaf").digest()
+    token = base64.b64encode(b"DER_BYTES").decode()
+    return {
+        "id": tracking_id,
+        "input_hash": "a" * 64,
+        "output_hash": "b" * 64,
+        "combined_hash": "c" * 64,
+        "metadata": {
+            "model_id": "test-model-v1",
+            "system_name": "cv-screening",
+            "risk_category": "employment",
+            "decision_type": "classification",
+            "human_oversight": True,
+            "time_envelope": {
+                "started_at": "2026-04-15T10:00:00Z",
+                "completed_at": "2026-04-15T10:00:01Z",
+            },
+        },
+        "verification_status": "VERIFIED",
+        "anchored_at": "2026-04-15T10:10:00Z",
+        "proof": {
+            "id": tracking_id,
+            "hash": leaf.hex(),
+            "hash_algorithm": "sha256",
+            "batch_id": "batch-ai-1",
+            "leaf_index": 0,
+            "merkle_root": leaf.hex(),
+            "proof_path": [],
+            "token": token,
+            "token_format": "rfc3161",
+            "tsa_serial": "42",
+            "provider": "sk-demo",
+            "anchored_at": "2026-04-15T10:10:00Z",
+        },
+    }
+
+
+class TestAnchorAiDecision(unittest.TestCase):
+
+    @patch("urllib.request.urlopen")
+    def test_returns_ai_decision_job(self, mock_urlopen):
+        mock_urlopen.return_value = _fake_response(_ai_job_payload())
+        job = TrustBeat(api_key="tb_live_test").anchor_ai_decision(
+            "a" * 64, "b" * 64, _ai_meta()
+        )
+        self.assertIsInstance(job, AiDecisionJob)
+        self.assertEqual(job.id, "ai-track-1")
+        self.assertEqual(job.input_hash, "a" * 64)
+        self.assertEqual(job.output_hash, "b" * 64)
+        self.assertEqual(job.status, "pending")
+        self.assertFalse(job.overage)
+
+    @patch("urllib.request.urlopen")
+    def test_sends_input_output_and_metadata(self, mock_urlopen):
+        mock_urlopen.return_value = _fake_response(_ai_job_payload())
+        TrustBeat(api_key="tb_live_test").anchor_ai_decision("a" * 64, "b" * 64, _ai_meta())
+        req = mock_urlopen.call_args[0][0]
+        body = json.loads(req.data.decode())
+        self.assertEqual(body["input_hash"], "a" * 64)
+        self.assertEqual(body["output_hash"], "b" * 64)
+        self.assertEqual(body["metadata"]["model_id"], "test-model-v1")
+        self.assertEqual(body["metadata"]["risk_category"], "employment")
+        self.assertTrue(body["metadata"]["human_oversight"])
+
+
+class TestGetAiDecisionProof(unittest.TestCase):
+
+    @patch("urllib.request.urlopen")
+    def test_returns_ai_decision_proof_when_anchored(self, mock_urlopen):
+        mock_urlopen.return_value = _fake_response(_ai_proof_payload())
+        proof = TrustBeat(api_key="tb_live_test").get_ai_decision_proof("ai-track-1")
+        self.assertIsInstance(proof, AiDecisionProof)
+        self.assertEqual(proof.verification_status, "VERIFIED")
+        self.assertEqual(proof.input_hash, "a" * 64)
+        self.assertIsNotNone(proof.proof)
+
+    @patch("urllib.request.urlopen")
+    def test_returns_none_when_not_anchored(self, mock_urlopen):
+        mock_urlopen.side_effect = _fake_http_error(
+            404, {"error": {"code": "NOT_ANCHORED", "message": "not yet anchored"}}
+        )
+        result = TrustBeat(api_key="tb_live_test").get_ai_decision_proof("ai-track-1")
+        self.assertIsNone(result)
+
+    @patch("urllib.request.urlopen")
+    def test_raises_not_found_for_unknown_id(self, mock_urlopen):
+        from trustbeat._exceptions import NotFoundError
+        mock_urlopen.side_effect = _fake_http_error(
+            404, {"error": {"code": "NOT_FOUND", "message": "not found"}}
+        )
+        with self.assertRaises(NotFoundError) as ctx:
+            TrustBeat(api_key="tb_live_test").get_ai_decision_proof("unknown-id")
+        self.assertEqual(ctx.exception.error_code, "NOT_FOUND")
 
 
 if __name__ == "__main__":

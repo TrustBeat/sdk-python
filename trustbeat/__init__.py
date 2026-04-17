@@ -33,7 +33,10 @@ Quick start::
 """
 
 from ._client import TrustBeat
-from ._models import AnchorJob, AnchorProof, ProofStep, TimestampResult
+from ._models import (
+    AnchorJob, AnchorProof, ProofStep, TimestampResult,
+    AiTimeEnvelope, AiDecisionMetadata, AiDecisionJob, AiDecisionProof,
+)
 from ._exceptions import (
     TrustBeatError,
     AuthError,
@@ -50,6 +53,10 @@ __all__ = [
     "AnchorProof",
     "ProofStep",
     "TimestampResult",
+    "AiTimeEnvelope",
+    "AiDecisionMetadata",
+    "AiDecisionJob",
+    "AiDecisionProof",
     # Exceptions
     "TrustBeatError",
     "AuthError",

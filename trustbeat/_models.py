@@ -70,6 +70,66 @@ class TimestampResult:
     description: str | None
 
 
+# ── AI Act Audit models ───────────────────────────────────────────────────────
+
+@dataclass
+class AiTimeEnvelope:
+    """Time window of a single AI inference call."""
+    started_at: str    # ISO 8601 — when inference started
+    completed_at: str  # ISO 8601 — when inference completed
+
+
+@dataclass
+class AiDecisionMetadata:
+    """
+    Metadata describing an AI decision to be anchored under EU AI Act Article 12.
+
+    Only ``model_id``, ``system_name``, ``risk_category``, ``decision_type``,
+    ``human_oversight``, and ``time_envelope`` are required. The remaining fields
+    are optional but recommended for auditor-ready records.
+    """
+    model_id: str           # model name + version tag, e.g. "claude-3-5-sonnet-20241022"
+    system_name: str        # AI system name, e.g. "cv-screening-v2"
+    risk_category: str      # AI Act Annex III category: "employment", "credit_scoring", etc.
+    decision_type: str      # "classification", "ranking", "recommendation", etc.
+    human_oversight: bool   # True if human oversight per AI Act Article 14 was in place
+    time_envelope: AiTimeEnvelope
+    model_version: str | None = None
+    operator_id: str | None = None
+    deployment_env: str | None = None  # "production", "staging", "testing"
+
+
+@dataclass
+class AiDecisionJob:
+    """Returned immediately (202) when an AI decision is enqueued for anchoring."""
+    id: str
+    input_hash: str
+    output_hash: str
+    combined_hash: str  # SHA-256(input_bytes || output_bytes || UTF-8(JCS(metadata)))
+    status: str         # always "pending" at creation
+    submitted_at: str   # ISO 8601
+    overage: bool
+
+
+@dataclass
+class AiDecisionProof:
+    """
+    Verification result returned once the AI decision has been anchored.
+
+    ``verification_status`` is ``"VERIFIED"`` when the Merkle proof is valid and
+    the combined hash in the leaf matches the expected value.
+    ``proof`` contains the full Merkle inclusion proof with the qualified RFC 3161 token.
+    """
+    id: str
+    input_hash: str
+    output_hash: str
+    combined_hash: str
+    metadata: AiDecisionMetadata
+    verification_status: str        # "VERIFIED" | "FAILED"
+    anchored_at: str | None
+    proof: AnchorProof | None       # None only when verification_status is "FAILED"
+
+
 # ── Parsers ───────────────────────────────────────────────────────────────────
 
 def _parse_anchor_job(data: dict) -> AnchorJob:
@@ -102,6 +162,47 @@ def _parse_proof(data: dict) -> AnchorProof:
         anchored_at=data["anchored_at"],
         client_ref=data.get("client_ref"),
         description=data.get("description"),
+    )
+
+
+def _parse_ai_decision_job(data: dict) -> AiDecisionJob:
+    return AiDecisionJob(
+        id=data["id"],
+        input_hash=data["input_hash"],
+        output_hash=data["output_hash"],
+        combined_hash=data["combined_hash"],
+        status=data["status"],
+        submitted_at=data["submitted_at"],
+        overage=data.get("overage", False),
+    )
+
+
+def _parse_ai_decision_proof(data: dict) -> AiDecisionProof:
+    te = data["metadata"]["time_envelope"]
+    meta = AiDecisionMetadata(
+        model_id=data["metadata"]["model_id"],
+        system_name=data["metadata"]["system_name"],
+        risk_category=data["metadata"]["risk_category"],
+        decision_type=data["metadata"]["decision_type"],
+        human_oversight=data["metadata"]["human_oversight"],
+        time_envelope=AiTimeEnvelope(
+            started_at=te["started_at"],
+            completed_at=te["completed_at"],
+        ),
+        model_version=data["metadata"].get("model_version"),
+        operator_id=data["metadata"].get("operator_id"),
+        deployment_env=data["metadata"].get("deployment_env"),
+    )
+    proof = _parse_proof(data["proof"]) if data.get("proof") else None
+    return AiDecisionProof(
+        id=data["id"],
+        input_hash=data["input_hash"],
+        output_hash=data["output_hash"],
+        combined_hash=data["combined_hash"],
+        metadata=meta,
+        verification_status=data["verification_status"],
+        anchored_at=data.get("anchored_at"),
+        proof=proof,
     )
 
 
