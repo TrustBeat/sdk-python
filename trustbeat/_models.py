@@ -215,6 +215,131 @@ def _parse_ai_decision_proof(data: dict) -> AiDecisionProof:
     )
 
 
+@dataclass
+class SignatureDetail:
+    """Per-signature result within a VerificationReport."""
+    index: int
+    qualified: bool
+    on_eutl: bool
+    qscd: bool
+    revocation_status: str      # "GOOD" | "REVOKED"
+    signature_level: str        # e.g. "B-LT", "B-LTA"
+    timestamp_present: bool
+    verdict: str                # SignatureVerdict value
+    signer_name: str | None = None
+    signer_email: str | None = None
+    signing_time: str | None = None
+    cert_serial: str | None = None
+    cert_fingerprint: str | None = None
+    cert_issuer: str | None = None
+    revocation_time: str | None = None
+    ocsp_response: str | None = None
+    timestamp_serial: str | None = None
+
+
+@dataclass
+class VerificationReport:
+    """
+    Full eIDAS signature verification report returned by verify_signature().
+
+    ``verdict`` is the top-level result (worst verdict across all signatures).
+    ``tracking_id`` is set after the report is saved; use with get_verification().
+    """
+    verdict: str            # SignatureVerdict value
+    signatures: list[SignatureDetail]
+    document_hash: str      # SHA-256 hex of the submitted document
+    checked_at: str         # ISO 8601
+    eutl_version: str | None = None
+    tracking_id: str | None = None
+
+
+@dataclass
+class VerificationJob:
+    """Returned immediately (202) when verify_and_anchor() is called."""
+    tracking_id: str
+    document_hash: str
+    status: str         # always "pending"
+    submitted_at: str   # ISO 8601
+
+
+@dataclass
+class CertificateValidationResult:
+    """Result of POST /v1/validate/certificate."""
+    subject: str
+    issuer: str
+    serial: str
+    not_before: str
+    not_after: str
+    qualified: bool
+    on_eutl: bool
+    qscd: bool
+    revocation_status: str   # "GOOD" | "REVOKED"
+    key_usage: list[str]
+    valid: bool
+    validated_at: str        # ISO 8601
+    revocation_time: str | None = None
+
+
+def _parse_signature_detail(d: dict) -> SignatureDetail:
+    return SignatureDetail(
+        index             = d["index"],
+        qualified         = d["qualified"],
+        on_eutl           = d["on_eutl"],
+        qscd              = d["qscd"],
+        revocation_status = d["revocation_status"],
+        signature_level   = d["signature_level"],
+        timestamp_present = d["timestamp_present"],
+        verdict           = d["verdict"],
+        signer_name       = d.get("signer_name"),
+        signer_email      = d.get("signer_email"),
+        signing_time      = d.get("signing_time"),
+        cert_serial       = d.get("cert_serial"),
+        cert_fingerprint  = d.get("cert_fingerprint"),
+        cert_issuer       = d.get("cert_issuer"),
+        revocation_time   = d.get("revocation_time"),
+        ocsp_response     = d.get("ocsp_response"),
+        timestamp_serial  = d.get("timestamp_serial"),
+    )
+
+
+def _parse_verification_report(d: dict) -> VerificationReport:
+    return VerificationReport(
+        verdict       = d["verdict"],
+        signatures    = [_parse_signature_detail(s) for s in d.get("signatures", [])],
+        document_hash = d["document_hash"],
+        checked_at    = d["checked_at"],
+        eutl_version  = d.get("eutl_version"),
+        tracking_id   = d.get("tracking_id"),
+    )
+
+
+def _parse_verification_job(d: dict) -> VerificationJob:
+    return VerificationJob(
+        tracking_id  = d["tracking_id"],
+        document_hash = d["document_hash"],
+        status       = d["status"],
+        submitted_at = d["submitted_at"],
+    )
+
+
+def _parse_cert_validation_result(d: dict) -> CertificateValidationResult:
+    return CertificateValidationResult(
+        subject          = d["subject"],
+        issuer           = d["issuer"],
+        serial           = d["serial"],
+        not_before       = d["not_before"],
+        not_after        = d["not_after"],
+        qualified        = d["qualified"],
+        on_eutl          = d["on_eutl"],
+        qscd             = d["qscd"],
+        revocation_status = d["revocation_status"],
+        key_usage        = d.get("key_usage", []),
+        valid            = d["valid"],
+        validated_at     = d["validated_at"],
+        revocation_time  = d.get("revocation_time"),
+    )
+
+
 def _parse_timestamp(data: dict) -> TimestampResult:
     return TimestampResult(
         id=data["id"],

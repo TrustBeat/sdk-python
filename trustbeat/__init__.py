@@ -36,6 +36,7 @@ from ._client import TrustBeat
 from ._models import (
     AnchorJob, AnchorProof, ProofStep, TimestampResult,
     AiTimeEnvelope, AiDecisionMetadata, AiDecisionJob, AiDecisionProof,
+    SignatureDetail, VerificationReport, VerificationJob, CertificateValidationResult,
 )
 from ._exceptions import (
     TrustBeatError,
@@ -57,6 +58,10 @@ __all__ = [
     "AiDecisionMetadata",
     "AiDecisionJob",
     "AiDecisionProof",
+    "SignatureDetail",
+    "VerificationReport",
+    "VerificationJob",
+    "CertificateValidationResult",
     # Exceptions
     "TrustBeatError",
     "AuthError",

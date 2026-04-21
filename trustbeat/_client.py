@@ -14,8 +14,10 @@ from ._exceptions import AuthError, NotFoundError, QuotaError, RateLimitError, T
 from ._models import (
     AnchorJob, AnchorProof, TimestampResult,
     AiDecisionJob, AiDecisionMetadata, AiDecisionProof,
+    VerificationReport, VerificationJob, CertificateValidationResult,
     _parse_anchor_job, _parse_proof, _parse_timestamp,
     _parse_ai_decision_job, _parse_ai_decision_proof,
+    _parse_verification_report, _parse_verification_job, _parse_cert_validation_result,
 )
 from ._verify import verify_proof
 
@@ -324,6 +326,97 @@ class TrustBeat:
                     "The batch cycle runs every ~10 minutes."
                 )
             time.sleep(min(poll_interval, remaining))
+
+    # ── Signature & certificate verification ──────────────────────────────────
+
+    def verify_signature(
+        self,
+        document: bytes,
+        format: str,
+        *,
+        callback_url: str | None = None,
+    ) -> VerificationReport:
+        """
+        Verify eIDAS electronic signatures on a document.
+
+        Validates PAdES (PDF), CAdES (CMS), or XAdES (XML) signatures against
+        the EU Trusted List (EUTL). Returns a full report with per-signature
+        details, qualification status, revocation status, and a top-level verdict.
+
+        The document bytes are base64-encoded before transmission and are
+        **never stored** — only the SHA-256 hash is retained.
+
+        :param document: Raw document bytes.
+        :param format: Signature format — "pades", "cades", or "xades".
+        :param callback_url: Optional webhook URL.
+        """
+        import base64 as _b64
+        body: dict[str, Any] = {
+            "document_base64": _b64.b64encode(document).decode(),
+            "format": format,
+        }
+        if callback_url is not None:
+            body["callback_url"] = callback_url
+        data = self._request("POST", "/v1/verify/signature", body)
+        return _parse_verification_report(data)
+
+    def verify_and_anchor(
+        self,
+        document: bytes,
+        format: str,
+        *,
+        callback_url: str | None = None,
+    ) -> VerificationJob:
+        """
+        Verify eIDAS signatures and anchor the verification event.
+
+        Same as :meth:`verify_signature` with ``anchor=True``: returns
+        immediately with a tracking ID (202 Accepted). The verification event
+        is enqueued for Merkle batch anchoring, producing a qualified timestamp
+        that proves the signature was valid at time of receipt.
+
+        Use :meth:`get_verification` to retrieve the completed report.
+
+        :param document: Raw document bytes.
+        :param format: Signature format — "pades", "cades", or "xades".
+        :param callback_url: Optional webhook URL called when anchoring completes.
+        """
+        import base64 as _b64
+        body: dict[str, Any] = {
+            "document_base64": _b64.b64encode(document).decode(),
+            "format": format,
+        }
+        if callback_url is not None:
+            body["callback_url"] = callback_url
+        data = self._request("POST", "/v1/verify/signature/anchored", body)
+        return _parse_verification_job(data)
+
+    def get_verification(self, tracking_id: str) -> VerificationReport:
+        """
+        Retrieve a saved verification report by tracking ID.
+
+        :param tracking_id: ID returned by :meth:`verify_signature` or
+            :meth:`verify_and_anchor`.
+        :raises NotFoundError: If the tracking ID is unknown.
+        """
+        data = self._request("GET", f"/v1/verify/{tracking_id}")
+        return _parse_verification_report(data)
+
+    def validate_certificate(self, certificate: bytes) -> CertificateValidationResult:
+        """
+        Validate a standalone X.509 certificate against the EU Trusted List.
+
+        Checks certificate chain, revocation status (OCSP/CRL), qualified
+        certificate status, and QSCD flag.
+
+        :param certificate: DER- or PEM-encoded X.509 certificate bytes.
+        """
+        import base64 as _b64
+        body: dict[str, Any] = {
+            "certificate_base64": _b64.b64encode(certificate).decode(),
+        }
+        data = self._request("POST", "/v1/validate/certificate", body)
+        return _parse_cert_validation_result(data)
 
     # ── Direct timestamps (credits) ────────────────────────────────────────────
 
