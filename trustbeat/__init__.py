@@ -2,7 +2,7 @@
 TrustBeat Python SDK
 ====================
 
-Qualified timestamping and Merkle anchoring for any content.
+Merkle anchoring for any content, backed by eIDAS-qualified timestamping.
 
 Quick start::
 
@@ -25,16 +25,11 @@ Quick start::
     # Save the RFC 3161 token
     with open("proof.tsr", "wb") as f:
         f.write(proof.token)
-
-    # Direct qualified timestamp (1 credit, not batched)
-    ts = tb.timestamp("e3b0c44298fc1c149afb4c8996fb92427ae41e4649b934ca495991b7852b855")
-    with open("timestamp.tsr", "wb") as f:
-        f.write(ts.token)
 """
 
 from ._client import TrustBeat
 from ._models import (
-    AnchorJob, AnchorProof, ProofStep, TimestampResult,
+    AnchorJob, AnchorProof, ProofStep,
     AiTimeEnvelope, AiDecisionMetadata, AiDecisionJob, AiDecisionProof,
     SignatureDetail, VerificationReport, VerificationJob, CertificateValidationResult,
 )
@@ -53,7 +48,6 @@ __all__ = [
     "AnchorJob",
     "AnchorProof",
     "ProofStep",
-    "TimestampResult",
     "AiTimeEnvelope",
     "AiDecisionMetadata",
     "AiDecisionJob",

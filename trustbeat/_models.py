@@ -51,25 +51,6 @@ class AnchorProof:
     description: str | None
 
 
-@dataclass
-class TimestampResult:
-    """
-    A dedicated RFC 3161 qualified timestamp (not batched).
-
-    Uses 1 credit from the account balance. ``token`` is the raw DER bytes.
-    """
-    id: str
-    hash: str
-    hash_algorithm: str
-    issued_at: str    # ISO 8601
-    provider: str
-    tsa_serial: str
-    token: bytes      # DER-encoded RFC 3161
-    token_format: str
-    client_ref: str | None
-    description: str | None
-
-
 # ── AI Act Audit models ───────────────────────────────────────────────────────
 
 @dataclass
@@ -340,16 +321,3 @@ def _parse_cert_validation_result(d: dict) -> CertificateValidationResult:
     )
 
 
-def _parse_timestamp(data: dict) -> TimestampResult:
-    return TimestampResult(
-        id=data["id"],
-        hash=data["hash"],
-        hash_algorithm=data["hash_algorithm"],
-        issued_at=data["issued_at"],
-        provider=data["provider"],
-        tsa_serial=data["tsa_serial"],
-        token=base64.b64decode(data["token"]),
-        token_format=data["token_format"],
-        client_ref=data.get("client_ref"),
-        description=data.get("description"),
-    )

@@ -12,10 +12,10 @@ from typing import Any
 
 from ._exceptions import AuthError, NotFoundError, QuotaError, RateLimitError, TrustBeatError
 from ._models import (
-    AnchorJob, AnchorProof, TimestampResult,
+    AnchorJob, AnchorProof,
     AiDecisionJob, AiDecisionMetadata, AiDecisionProof,
     VerificationReport, VerificationJob, CertificateValidationResult,
-    _parse_anchor_job, _parse_proof, _parse_timestamp,
+    _parse_anchor_job, _parse_proof,
     _parse_ai_decision_job, _parse_ai_decision_proof,
     _parse_verification_report, _parse_verification_job, _parse_cert_validation_result,
 )
@@ -417,37 +417,6 @@ class TrustBeat:
         }
         data = self._request("POST", "/v1/validate/certificate", body)
         return _parse_cert_validation_result(data)
-
-    # ── Direct timestamps (credits) ────────────────────────────────────────────
-
-    def timestamp(
-        self,
-        sha256_hex: str,
-        *,
-        client_ref: str | None = None,
-        description: str | None = None,
-    ) -> TimestampResult:
-        """
-        Issue a dedicated RFC 3161 qualified timestamp for a single hash.
-
-        Unlike :meth:`anchor`, this is **not batched** — the timestamp is
-        issued immediately and exclusively for this hash. Uses 1 credit.
-
-        The returned ``token`` field contains the raw DER-encoded RFC 3161
-        ``TimeStampToken``. Write it to a ``.tsr`` file to use with OpenSSL
-        or other TSA verification tools.
-
-        :param sha256_hex: Lowercase hex-encoded SHA-256 digest of the content.
-        :param client_ref: Optional reference tag stored with the timestamp.
-        :param description: Optional human-readable description.
-        """
-        body: dict[str, Any] = {"hash": sha256_hex, "hash_algorithm": "sha256"}
-        if client_ref is not None:
-            body["client_ref"] = client_ref
-        if description is not None:
-            body["description"] = description
-        data = self._request("POST", "/v1/timestamp", body)
-        return _parse_timestamp(data)
 
     # ── Internal HTTP ──────────────────────────────────────────────────────────
 
