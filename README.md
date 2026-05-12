@@ -28,10 +28,6 @@ assert tb.verify(proof)
 job = tb.anchor("e3b0c44298fc1c149afb4c8996fb92427ae41e4649b934ca495991b7852b855")
 proof = tb.anchor_wait(job.id)  # blocks up to 11 min
 
-# Direct qualified timestamp (1 credit, instant)
-ts = tb.timestamp("e3b0c44298fc1c149afb4c8996fb92427ae41e4649b934ca495991b7852b855")
-with open("timestamp.tsr", "wb") as f:
-    f.write(ts.token)  # RFC 3161 DER token
 ```
 
 ## Requirements
