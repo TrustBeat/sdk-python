@@ -12,10 +12,10 @@ from typing import Any
 
 from ._exceptions import AuthError, NotFoundError, QuotaError, RateLimitError, TrustBeatError
 from ._models import (
-    AnchorJob, AnchorProof,
+    AnchorJob, AnchorProof, BatchSubmission, BatchStatus,
     AiDecisionJob, AiDecisionMetadata, AiDecisionProof,
     VerificationReport, VerificationJob, CertificateValidationResult,
-    _parse_anchor_job, _parse_proof,
+    _parse_anchor_job, _parse_proof, _parse_batch_submission, _parse_batch_status,
     _parse_ai_decision_job, _parse_ai_decision_proof,
     _parse_verification_report, _parse_verification_job, _parse_cert_validation_result,
 )
@@ -153,18 +153,18 @@ class TrustBeat:
         sha256_hashes: list[str],
         *,
         callback_url: str | None = None,
-    ) -> list[AnchorJob]:
+    ) -> BatchSubmission:
         """
         Submit up to 100 SHA-256 hashes in a single request.
 
-        Returns a list of :class:`AnchorJob` objects in the same order as the
-        input. All hashes join the same batch cycle.
+        Returns a :class:`BatchSubmission` with a ``submission_id`` that groups all
+        items. Use :meth:`anchor_batch_wait` to block until all proofs are ready.
 
         :param sha256_hashes: List of lowercase hex-encoded SHA-256 digests.
         :param callback_url: Optional webhook URL called when each hash anchors.
         """
         if not sha256_hashes:
-            return []
+            return BatchSubmission(submission_id="", items=[])
         if len(sha256_hashes) > 100:
             raise ValueError("anchor_batch accepts at most 100 hashes per call")
         items: list[dict[str, Any]] = [
@@ -174,7 +174,70 @@ class TrustBeat:
             for item in items:
                 item["callback_url"] = callback_url
         data = self._request("POST", "/v1/anchor/batch", {"hashes": items})
-        return [_parse_anchor_job(item) for item in data["accepted"]]
+        return _parse_batch_submission(data)
+
+    def get_batch_status(self, submission_id: str) -> BatchStatus:
+        """
+        Return anchored/pending counts for a batch submission.
+
+        :param submission_id: The ``submission_id`` returned by :meth:`anchor_batch`.
+        """
+        data = self._request("GET", f"/v1/anchor/batch/{submission_id}/status")
+        return _parse_batch_status(data)
+
+    def get_batch_proofs(self, submission_id: str) -> list[AnchorProof]:
+        """
+        Return all anchored inclusion proofs for a batch submission.
+
+        :param submission_id: The ``submission_id`` returned by :meth:`anchor_batch`.
+        """
+        data = self._request("GET", f"/v1/anchor/batch/{submission_id}/proofs")
+        return [_parse_proof(p) for p in data.get("proofs", [])]
+
+    def anchor_batch_wait(
+        self,
+        submission: "BatchSubmission | str",
+        *,
+        timeout: float = 900.0,
+        poll_interval: float = 15.0,
+    ) -> list[AnchorProof]:
+        """
+        Block until all hashes in a batch submission are anchored, then return proofs.
+
+        :param submission: A :class:`BatchSubmission` or a raw ``submission_id`` string.
+        :param timeout: Maximum seconds to wait (default 900 = 15 min).
+        :param poll_interval: Seconds between polls (default 15).
+        """
+        sid = submission if isinstance(submission, str) else submission.submission_id
+        deadline = time.monotonic() + timeout
+        while True:
+            status = self.get_batch_status(sid)
+            if status.pending == 0 and status.total > 0:
+                return self.get_batch_proofs(sid)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(
+                    f"Batch submission {sid!r} not fully anchored within {timeout}s."
+                )
+            time.sleep(min(poll_interval, remaining))
+
+    async def anchor_batch_wait_async(
+        self,
+        submission: "BatchSubmission | str",
+        *,
+        timeout: float = 900.0,
+        poll_interval: float = 15.0,
+    ) -> list[AnchorProof]:
+        """
+        Async wrapper around :meth:`anchor_batch_wait` — runs in a thread pool.
+        """
+        import asyncio
+        return await asyncio.to_thread(
+            self.anchor_batch_wait,
+            submission,
+            timeout=timeout,
+            poll_interval=poll_interval,
+        )
 
     def get_proof(self, tracking_id: str) -> AnchorProof | None:
         """

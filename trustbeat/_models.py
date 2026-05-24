@@ -51,6 +51,22 @@ class AnchorProof:
     description: str | None
 
 
+@dataclass
+class BatchSubmission:
+    """Returned by anchor_batch() — groups all submitted items under one submission_id."""
+    submission_id: str
+    items: list[AnchorJob]
+
+
+@dataclass
+class BatchStatus:
+    """Returned by get_batch_status()."""
+    submission_id: str
+    total: int
+    anchored: int
+    pending: int
+
+
 # ── AI Act Audit models ───────────────────────────────────────────────────────
 
 @dataclass
@@ -148,6 +164,22 @@ def _parse_proof(data: dict) -> AnchorProof:
         anchored_at=data["anchored_at"],
         client_ref=data.get("client_ref"),
         description=data.get("description"),
+    )
+
+
+def _parse_batch_submission(data: dict) -> "BatchSubmission":
+    return BatchSubmission(
+        submission_id=data["submission_id"],
+        items=[_parse_anchor_job(item) for item in data.get("accepted", [])],
+    )
+
+
+def _parse_batch_status(data: dict) -> "BatchStatus":
+    return BatchStatus(
+        submission_id=data["submission_id"],
+        total=data["total"],
+        anchored=data["anchored"],
+        pending=data["pending"],
     )
 
 
