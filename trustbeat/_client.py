@@ -481,7 +481,200 @@ class TrustBeat:
         data = self._request("POST", "/v1/validate/certificate", body)
         return _parse_cert_validation_result(data)
 
+    # ── Audit Trail ───────────────────────────────────────────────────────────
+
+    def submit_audit_event(
+        self,
+        trail_category: str,
+        actor: str,
+        action: str,
+        ts: str,
+        *,
+        system: str | None = None,
+        subsystem: str | None = None,
+        resource: str | None = None,
+        subresource: str | None = None,
+        metadata: dict | None = None,
+        **client_refs: str,
+    ) -> str:
+        """
+        Submit a single audit event for tamper-evident Merkle anchoring.
+
+        Returns the ``event_id`` (tracking ID) immediately (202 Accepted).
+        The event will be anchored in the next batch cycle (~10 minutes).
+
+        :param trail_category: Logical trail, e.g. ``"financial"`` or ``"access"``.
+        :param actor: Who performed the action, e.g. ``"user:42"`` or ``"svc:payments"``.
+        :param action: Machine-readable verb, e.g. ``"payment.approved"``.
+        :param ts: ISO 8601 timestamp of when the event occurred.
+        :param system: Source system identifier (optional).
+        :param subsystem: Sub-component identifier (optional).
+        :param resource: Primary resource URI/ID (optional).
+        :param subresource: Secondary resource URI/ID (optional).
+        :param metadata: Arbitrary JSON object stored alongside the event (max 8 KB).
+        :param client_refs: Optional keyword args ``client_ref_1`` … ``client_ref_5``.
+        :returns: ``event_id`` string.
+        """
+        body: dict[str, Any] = {
+            "trail_category": trail_category,
+            "actor": actor,
+            "action": action,
+            "ts": ts,
+        }
+        if system      is not None: body["system"]      = system
+        if subsystem   is not None: body["subsystem"]   = subsystem
+        if resource    is not None: body["resource"]    = resource
+        if subresource is not None: body["subresource"] = subresource
+        if metadata    is not None: body["metadata"]    = metadata
+        for k in ("client_ref_1", "client_ref_2", "client_ref_3", "client_ref_4", "client_ref_5"):
+            if client_refs.get(k) is not None:
+                body[k] = client_refs[k]
+        data = self._request("POST", "/v1/audit/events", body)
+        return data["event_id"]
+
+    def submit_audit_events(self, events: list[dict]) -> list[str]:
+        """
+        Submit up to 1,000 audit events in a single batch request.
+
+        Each item in *events* must be a dict with the same keys accepted by
+        :meth:`submit_audit_event`.
+
+        :returns: List of ``event_id`` strings in submission order.
+        """
+        data = self._request("POST", "/v1/audit/events/batch", {"events": events})
+        return data.get("event_ids", [])
+
+    def get_audit_event_proof(self, event_id: str) -> "AuditEventProof | None":
+        """
+        Fetch the Merkle inclusion proof for an anchored audit event.
+
+        Returns ``None`` if the event exists but has not yet been anchored
+        (still pending the next batch cycle).  Raises :exc:`NotFoundError` if
+        the *event_id* is unknown.
+
+        :param event_id: ID returned by :meth:`submit_audit_event`.
+        """
+        from ._models import _parse_audit_event_proof
+        from ._exceptions import NotFoundError
+        try:
+            res = self._request("GET", f"/v1/audit/events/{event_id}/proof")
+            return _parse_audit_event_proof(res)
+        except NotFoundError:
+            raise
+        except Exception:
+            return None  # 202 pending response (non-JSON or status field)
+
+    def list_audit_events(
+        self,
+        *,
+        trail_category: str | None = None,
+        actor: str | None = None,
+        action: str | None = None,
+        resource: str | None = None,
+        system: str | None = None,
+        from_ts: str | None = None,
+        to_ts: str | None = None,
+        page: int = 1,
+        page_size: int = 25,
+    ) -> list["AuditEvent"]:
+        """
+        Query audit events with optional filters.
+
+        All filter parameters are optional; omit to retrieve all events.
+
+        :param trail_category: Filter by trail category.
+        :param actor: Filter by actor identifier.
+        :param action: Filter by action verb.
+        :param resource: Filter by resource identifier.
+        :param system: Filter by source system.
+        :param from_ts: ISO 8601 start timestamp (inclusive).
+        :param to_ts: ISO 8601 end timestamp (inclusive).
+        :param page: 1-based page number (default 1).
+        :param page_size: Events per page, max 100 (default 25).
+        :returns: List of :class:`AuditEvent` objects.
+        """
+        from ._models import _parse_audit_event
+        params: list[str] = [f"page={page}", f"page_size={page_size}"]
+        if trail_category: params.append(f"trail_category={trail_category}")
+        if actor:          params.append(f"actor={actor}")
+        if action:         params.append(f"action={action}")
+        if resource:       params.append(f"resource={resource}")
+        if system:         params.append(f"system={system}")
+        if from_ts:        params.append(f"from={from_ts}")
+        if to_ts:          params.append(f"to={to_ts}")
+        data = self._request("GET", "/v1/audit/events?" + "&".join(params))
+        return [_parse_audit_event(e) for e in data.get("events", [])]
+
+    def export_audit_events(
+        self,
+        *,
+        trail_category: str | None = None,
+        from_ts: str | None = None,
+        to_ts: str | None = None,
+    ) -> bytes:
+        """
+        Export audit events as a court-admissible ZIP package and return the raw bytes.
+
+        The ZIP contains ``events.jsonl``, per-event proof files in ``proofs/``,
+        and a ``VERIFY.md`` offline verification guide.
+
+        This call blocks until the export job completes (typically a few seconds
+        for small ledgers, longer for large ones).
+
+        :param trail_category: Restrict export to one trail category (optional).
+        :param from_ts: ISO 8601 start timestamp (optional).
+        :param to_ts: ISO 8601 end timestamp (optional).
+        :returns: ZIP file bytes.
+        """
+        import time as _time
+        body: dict[str, Any] = {}
+        if trail_category: body["trail_category"] = trail_category
+        if from_ts:        body["from"] = from_ts
+        if to_ts:          body["to"]   = to_ts
+        data = self._request("POST", "/v1/audit/export", body)
+        job_id = data["job_id"]
+        deadline = _time.monotonic() + 300.0
+        while True:
+            raw = self._request_raw("GET", f"/v1/audit/export/{job_id}")
+            if raw["content_type"].startswith("application/zip"):
+                return raw["body"]
+            status = raw.get("json", {}).get("status", "")
+            if status == "failed":
+                raise TrustBeatError(raw.get("json", {}).get("error", "Export failed"))
+            if _time.monotonic() > deadline:
+                raise TimeoutError(f"Audit export job {job_id} did not complete within 300 s.")
+            _time.sleep(3)
+
     # ── Internal HTTP ──────────────────────────────────────────────────────────
+
+    def _request_raw(self, method: str, path: str) -> dict:
+        """Like _request but returns raw bytes + content-type for binary responses."""
+        url = f"{self._base_url}{path}"
+        req = urllib.request.Request(
+            url,
+            method=method,
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+                "User-Agent": f"trustbeat-python/{_SDK_VERSION}",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+                ct = resp.headers.get("Content-Type", "")
+                body_bytes = resp.read()
+                if ct.startswith("application/zip"):
+                    return {"content_type": ct, "body": body_bytes}
+                return {"content_type": ct, "json": json.loads(body_bytes.decode())}
+        except urllib.error.HTTPError as exc:
+            raw = exc.read().decode(errors="replace")
+            try:
+                err = json.loads(raw).get("error", {})
+            except Exception:
+                err = {}
+            msg = err.get("message", f"HTTP {exc.code}")
+            req_id = err.get("request_id")
+            code = err.get("code", "")
+            raise TrustBeatError(msg, status=exc.code, request_id=req_id, error_code=code) from exc
 
     def _request(self, method: str, path: str, body: dict | None = None) -> dict:
         url = f"{self._base_url}{path}"

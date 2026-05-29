@@ -335,6 +335,85 @@ def _parse_verification_job(d: dict) -> VerificationJob:
     )
 
 
+@dataclass
+class AuditProofStep:
+    """One step in a Merkle inclusion proof."""
+    sibling: str    # hex-encoded sibling hash
+    side: str       # "left" or "right"
+
+
+@dataclass
+class AuditEvent:
+    """A single audit event as returned by the list endpoint."""
+    event_id: str
+    trail_category: str
+    actor: str
+    action: str
+    ts: str                     # ISO 8601 — when the event occurred
+    received_at: str            # ISO 8601 — when TrustBeat received it
+    anchored: bool
+    system: str | None = None
+    resource: str | None = None
+
+
+@dataclass
+class AuditEventProof:
+    """Full Merkle inclusion proof for an anchored audit event."""
+    event_id: str
+    canonical_hash: str
+    batch_id: str
+    leaf_index: int
+    merkle_path: list[AuditProofStep]
+    anchored_at: str            # ISO 8601
+
+
+@dataclass
+class AuditExportJob:
+    """Returned immediately (202) when an export job is created."""
+    job_id: str
+    status: str                 # "pending" | "processing" | "ready" | "failed"
+    event_count: int | None = None
+    error: str | None = None
+
+
+def _parse_audit_proof_step(d: dict) -> AuditProofStep:
+    return AuditProofStep(sibling=d["sibling"], side=d["side"])
+
+
+def _parse_audit_event(d: dict) -> AuditEvent:
+    return AuditEvent(
+        event_id      = d["event_id"],
+        trail_category= d["trail_category"],
+        actor         = d["actor"],
+        action        = d["action"],
+        ts            = d["ts"],
+        received_at   = d["received_at"],
+        anchored      = d["anchored"],
+        system        = d.get("system"),
+        resource      = d.get("resource"),
+    )
+
+
+def _parse_audit_event_proof(d: dict) -> AuditEventProof:
+    return AuditEventProof(
+        event_id      = d["event_id"],
+        canonical_hash= d["canonical_hash"],
+        batch_id      = d["batch_id"],
+        leaf_index    = d["leaf_index"],
+        merkle_path   = [_parse_audit_proof_step(s) for s in d.get("merkle_path", [])],
+        anchored_at   = d["anchored_at"],
+    )
+
+
+def _parse_audit_export_job(d: dict) -> AuditExportJob:
+    return AuditExportJob(
+        job_id      = d["job_id"],
+        status      = d["status"],
+        event_count = d.get("event_count"),
+        error       = d.get("error"),
+    )
+
+
 def _parse_cert_validation_result(d: dict) -> CertificateValidationResult:
     return CertificateValidationResult(
         subject          = d["subject"],

@@ -32,6 +32,7 @@ from ._models import (
     AnchorJob, AnchorProof, ProofStep,
     AiTimeEnvelope, AiDecisionMetadata, AiDecisionJob, AiDecisionProof,
     SignatureDetail, VerificationReport, VerificationJob, CertificateValidationResult,
+    AuditProofStep, AuditEvent, AuditEventProof, AuditExportJob,
 )
 from ._exceptions import (
     TrustBeatError,
@@ -56,6 +57,10 @@ __all__ = [
     "VerificationReport",
     "VerificationJob",
     "CertificateValidationResult",
+    "AuditProofStep",
+    "AuditEvent",
+    "AuditEventProof",
+    "AuditExportJob",
     # Exceptions
     "TrustBeatError",
     "AuthError",
