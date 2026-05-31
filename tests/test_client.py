@@ -16,7 +16,7 @@ from io import BytesIO
 from unittest.mock import MagicMock, patch
 
 from trustbeat import TrustBeat, AnchorJob, AnchorProof, AiDecisionJob, AiDecisionProof
-from trustbeat._models import AiDecisionMetadata, AiTimeEnvelope
+from trustbeat._models import AiDecisionMetadata, AiTimeEnvelope, BatchSubmission
 from trustbeat._exceptions import AuthError, NotFoundError, QuotaError, RateLimitError, TrustBeatError
 
 
@@ -107,18 +107,23 @@ class TestAnchor(unittest.TestCase):
 class TestAnchorBatch(unittest.TestCase):
 
     @patch("urllib.request.urlopen")
-    def test_returns_list_of_jobs(self, mock_urlopen):
+    def test_returns_batch_submission(self, mock_urlopen):
         mock_urlopen.return_value = _fake_response({
+            "submission_id": "sub-abc",
             "accepted": [_anchor_accepted_payload("t1"), _anchor_accepted_payload("t2")],
             "total": 2,
         })
-        jobs = TrustBeat(api_key="tb_live_test").anchor_batch(["a" * 64, "b" * 64])
-        self.assertEqual(len(jobs), 2)
-        self.assertEqual(jobs[0].id, "t1")
-        self.assertEqual(jobs[1].id, "t2")
+        result = TrustBeat(api_key="tb_live_test").anchor_batch(["a" * 64, "b" * 64])
+        self.assertIsInstance(result, BatchSubmission)
+        self.assertEqual(result.submission_id, "sub-abc")
+        self.assertEqual(len(result.items), 2)
+        self.assertEqual(result.items[0].id, "t1")
+        self.assertEqual(result.items[1].id, "t2")
 
-    def test_empty_list_returns_empty_without_request(self):
-        self.assertEqual(TrustBeat(api_key="tb_live_test").anchor_batch([]), [])
+    def test_empty_list_returns_empty_submission_without_request(self):
+        result = TrustBeat(api_key="tb_live_test").anchor_batch([])
+        self.assertIsInstance(result, BatchSubmission)
+        self.assertEqual(result.items, [])
 
     def test_over_100_hashes_raises_value_error(self):
         with self.assertRaises(ValueError):
