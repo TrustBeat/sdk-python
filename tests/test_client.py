@@ -91,7 +91,7 @@ class TestAnchor(unittest.TestCase):
         req = mock_urlopen.call_args[0][0]
         body = json.loads(req.data.decode())
         self.assertEqual(body["hash"], "b" * 64)
-        self.assertEqual(body["hash_algorithm"], "sha256")
+        self.assertEqual(body["hash_algorithm"], "SHA-256")
         self.assertEqual(body["client_ref"], "ref-1")
 
     @patch("urllib.request.urlopen")

@@ -74,7 +74,7 @@ class TrustBeat:
         :param description: Optional human-readable description.
         :param callback_url: Optional webhook URL called when anchoring completes.
         """
-        body: dict[str, Any] = {"hash": sha256_hex, "hash_algorithm": "sha256"}
+        body: dict[str, Any] = {"hash": sha256_hex, "hash_algorithm": "SHA-256"}
         if client_ref is not None:
             body["client_ref"] = client_ref
         if description is not None:
@@ -168,7 +168,7 @@ class TrustBeat:
         if len(sha256_hashes) > 100:
             raise ValueError("anchor_batch accepts at most 100 hashes per call")
         items: list[dict[str, Any]] = [
-            {"hash": h, "hash_algorithm": "sha256"} for h in sha256_hashes
+            {"hash": h, "hash_algorithm": "SHA-256"} for h in sha256_hashes
         ]
         if callback_url is not None:
             for item in items:
@@ -246,7 +246,7 @@ class TrustBeat:
         Returns ``None`` if the hash is still pending (not yet anchored).
         Raises :exc:`NotFoundError` if the tracking ID is unknown.
         """
-        data = self._request("GET", f"/v1/anchor/{tracking_id}")
+        data = self._request("GET", f"/v1/anchor/{tracking_id}/proof")
         if data.get("status") == "pending":
             return None
         return _parse_proof(data)
