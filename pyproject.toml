@@ -9,6 +9,21 @@ description = "TrustBeat SDK — qualified timestamping and Merkle anchoring"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
+authors = [{ name = "Trustbeat s.r.o.", email = "radim.dejmek@trustbeat.eu" }]
+keywords = ["eidas", "timestamp", "rfc3161", "merkle", "anchoring", "trust", "qualified"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security :: Cryptography",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
 dependencies = []  # zero runtime dependencies — stdlib only
 
 [project.optional-dependencies]
@@ -19,8 +34,8 @@ dev = [
 
 [project.urls]
 Homepage    = "https://trustbeat.eu"
-Repository  = "https://github.com/trustbeat/trustbeat-python"
-Issues      = "https://github.com/trustbeat/trustbeat-python/issues"
+Repository  = "https://github.com/TrustBeat/sdk-python"
+Issues      = "https://github.com/TrustBeat/sdk-python/issues"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
