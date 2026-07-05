@@ -12,6 +12,7 @@ import os
 import tempfile
 import unittest
 import urllib.error
+import zipfile
 from io import BytesIO
 from unittest.mock import MagicMock, patch
 
@@ -426,6 +427,25 @@ class TestGetAiDecisionProof(unittest.TestCase):
         self.assertIsNone(result)
 
     @patch("urllib.request.urlopen")
+    def test_returns_none_when_status_pending(self, mock_urlopen):
+        # Before anchoring the API returns 200 with verification_status="PENDING"
+        # and no proof — the SDK must treat that as "not ready yet" (None), not a
+        # proof object, so callers can keep polling.
+        pending = {
+            "id": "ai-track-1",
+            "input_hash": "a" * 64,
+            "output_hash": "b" * 64,
+            "combined_hash": "c" * 64,
+            "metadata": _ai_proof_payload()["metadata"],
+            "verification_status": "PENDING",
+            "anchored_at": None,
+            "proof": None,
+        }
+        mock_urlopen.return_value = _fake_response(pending)
+        result = TrustBeat(api_key="tb_live_test").get_ai_decision_proof("ai-track-1")
+        self.assertIsNone(result)
+
+    @patch("urllib.request.urlopen")
     def test_raises_not_found_for_unknown_id(self, mock_urlopen):
         from trustbeat._exceptions import NotFoundError
         mock_urlopen.side_effect = _fake_http_error(
@@ -434,6 +454,88 @@ class TestGetAiDecisionProof(unittest.TestCase):
         with self.assertRaises(NotFoundError) as ctx:
             TrustBeat(api_key="tb_live_test").get_ai_decision_proof("unknown-id")
         self.assertEqual(ctx.exception.error_code, "NOT_FOUND")
+
+
+class TestSubmitAuditEventsBatch(unittest.TestCase):
+
+    @staticmethod
+    def _events():
+        return [
+            {"trail_category": "financial", "actor": "svc:pay",
+             "action": "payment.approved", "ts": "2026-04-15T10:00:00Z"},
+            {"trail_category": "financial", "actor": "svc:pay",
+             "action": "payment.settled", "ts": "2026-04-15T10:00:05Z"},
+        ]
+
+    @patch("urllib.request.urlopen")
+    def test_sends_bare_json_array(self, mock_urlopen):
+        # The API decodes the body as List[AuditEventInput]; the payload must be a
+        # bare JSON array, NOT wrapped in {"events": [...]}.
+        mock_urlopen.return_value = _fake_response({"event_ids": ["e1", "e2"]})
+        TrustBeat(api_key="tb_live_test").submit_audit_events(self._events())
+        req = mock_urlopen.call_args[0][0]
+        body = json.loads(req.data.decode())
+        self.assertIsInstance(body, list)
+        self.assertEqual(len(body), 2)
+        self.assertEqual(body[0]["action"], "payment.approved")
+
+    @patch("urllib.request.urlopen")
+    def test_returns_event_ids(self, mock_urlopen):
+        mock_urlopen.return_value = _fake_response({"event_ids": ["e1", "e2"]})
+        ids = TrustBeat(api_key="tb_live_test").submit_audit_events(self._events())
+        self.assertEqual(ids, ["e1", "e2"])
+
+    @patch("urllib.request.urlopen")
+    def test_returns_empty_list_when_missing(self, mock_urlopen):
+        mock_urlopen.return_value = _fake_response({})
+        ids = TrustBeat(api_key="tb_live_test").submit_audit_events(self._events())
+        self.assertEqual(ids, [])
+
+
+class TestExportAuditEvents(unittest.TestCase):
+
+    @staticmethod
+    def _zip_response():
+        buf = BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("events.jsonl", '{"id":"e1"}\n')
+        raw = buf.getvalue()
+        mock = MagicMock()
+        mock.__enter__ = MagicMock(return_value=mock)
+        mock.__exit__ = MagicMock(return_value=False)
+        mock.read.return_value = raw
+        mock.headers = {"Content-Type": "application/zip"}
+        return mock, raw
+
+    @patch("urllib.request.urlopen")
+    def test_requires_from_and_to(self, mock_urlopen):
+        tb = TrustBeat(api_key="tb_live_test")
+        with self.assertRaises(ValueError):
+            tb.export_audit_events(from_ts="", to_ts="2026-04-16T00:00:00Z")
+        with self.assertRaises(ValueError):
+            tb.export_audit_events(from_ts="2026-04-15T00:00:00Z", to_ts="")
+        # No HTTP request should have been attempted for the invalid calls.
+        mock_urlopen.assert_not_called()
+
+    @patch("urllib.request.urlopen")
+    def test_sends_from_and_to_in_body(self, mock_urlopen):
+        zip_mock, raw = self._zip_response()
+        # First call: create job (JSON). Second call: fetch artifact (ZIP).
+        mock_urlopen.side_effect = [
+            _fake_response({"job_id": "job-1", "status": "pending"}),
+            zip_mock,
+        ]
+        blob = TrustBeat(api_key="tb_live_test").export_audit_events(
+            from_ts="2026-04-15T00:00:00Z",
+            to_ts="2026-04-16T00:00:00Z",
+            trail_category="financial",
+        )
+        self.assertEqual(blob, raw)
+        create_req = mock_urlopen.call_args_list[0][0][0]
+        body = json.loads(create_req.data.decode())
+        self.assertEqual(body["from"], "2026-04-15T00:00:00Z")
+        self.assertEqual(body["to"], "2026-04-16T00:00:00Z")
+        self.assertEqual(body["trail_category"], "financial")
 
 
 if __name__ == "__main__":

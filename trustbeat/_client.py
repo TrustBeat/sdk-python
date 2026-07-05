@@ -22,7 +22,7 @@ from ._models import (
 from ._verify import verify_proof
 
 _DEFAULT_BASE_URL = "https://api.trustbeat.eu"
-_SDK_VERSION = "0.1.0"
+_SDK_VERSION = "0.1.1"
 
 
 class TrustBeat:
@@ -351,12 +351,19 @@ class TrustBeat:
         """
         Fetch the verification result for a previously submitted AI decision.
 
-        Returns ``None`` if the decision is still pending (not yet anchored).
-        Raises :exc:`NotFoundError` if the tracking ID is unknown.
+        Returns ``None`` if the decision is still pending (not yet anchored) —
+        i.e. the endpoint reports ``verification_status="PENDING"`` or the
+        decision is not yet anchored. Raises :exc:`NotFoundError` if the
+        tracking ID is unknown.
         """
         from ._exceptions import NotFoundError
         try:
             data = self._request("GET", f"/v1/ai/decisions/verify/{tracking_id}")
+            # While the decision is submitted but not yet anchored the endpoint
+            # returns 200 with verification_status="PENDING" and no proof. Treat
+            # that as "not ready yet" so callers can poll until VERIFIED/FAILED.
+            if data.get("verification_status") == "PENDING":
+                return None
             return _parse_ai_decision_proof(data)
         except NotFoundError as exc:
             if exc.error_code == "NOT_ANCHORED":
@@ -541,7 +548,7 @@ class TrustBeat:
 
         :returns: List of ``event_id`` strings in submission order.
         """
-        data = self._request("POST", "/v1/audit/events/batch", {"events": events})
+        data = self._request("POST", "/v1/audit/events/batch", events)
         return data.get("event_ids", [])
 
     def get_audit_event_proof(self, event_id: str) -> "AuditEventProof | None":
@@ -608,9 +615,9 @@ class TrustBeat:
     def export_audit_events(
         self,
         *,
+        from_ts: str,
+        to_ts: str,
         trail_category: str | None = None,
-        from_ts: str | None = None,
-        to_ts: str | None = None,
     ) -> bytes:
         """
         Export audit events as a court-admissible ZIP package and return the raw bytes.
@@ -621,16 +628,17 @@ class TrustBeat:
         This call blocks until the export job completes (typically a few seconds
         for small ledgers, longer for large ones).
 
+        :param from_ts: ISO 8601 start timestamp (**required**, inclusive).
+        :param to_ts: ISO 8601 end timestamp (**required**, inclusive).
         :param trail_category: Restrict export to one trail category (optional).
-        :param from_ts: ISO 8601 start timestamp (optional).
-        :param to_ts: ISO 8601 end timestamp (optional).
         :returns: ZIP file bytes.
+        :raises ValueError: if *from_ts* or *to_ts* is empty.
         """
         import time as _time
-        body: dict[str, Any] = {}
+        if not from_ts or not to_ts:
+            raise ValueError("export_audit_events requires both from_ts and to_ts")
+        body: dict[str, Any] = {"from": from_ts, "to": to_ts}
         if trail_category: body["trail_category"] = trail_category
-        if from_ts:        body["from"] = from_ts
-        if to_ts:          body["to"]   = to_ts
         data = self._request("POST", "/v1/audit/export", body)
         job_id = data["job_id"]
         deadline = _time.monotonic() + 300.0
@@ -676,7 +684,7 @@ class TrustBeat:
             code = err.get("code", "")
             raise TrustBeatError(msg, status=exc.code, request_id=req_id, error_code=code) from exc
 
-    def _request(self, method: str, path: str, body: dict | None = None) -> dict:
+    def _request(self, method: str, path: str, body: dict | list | None = None) -> dict:
         url = f"{self._base_url}{path}"
         data = json.dumps(body).encode() if body is not None else None
         req = urllib.request.Request(
