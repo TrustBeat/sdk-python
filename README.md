@@ -34,6 +34,40 @@ proof = tb.anchor_wait(job.id)  # blocks up to 11 min
 
 ```
 
+## Tamper-Evident Logs (NIS2)
+
+Anchor a log hash together with canonical metadata for NIS2 Article 21 audit trails.
+The server seals your metadata into the Merkle leaf, so the proof covers both the log
+content and its context.
+
+```python
+import hashlib
+from trustbeat import TrustBeat, LogMetadata, LogSource, LogSourceIdentity, LogTimeEnvelope
+
+tb = TrustBeat(api_key="tb_live_...")
+
+# Hash the log yourself — content never leaves your machine.
+with open("app.log", "rb") as f:
+    log_hash = hashlib.sha256(f.read()).hexdigest()
+
+job = tb.anchor_log(
+    log_hash,
+    LogMetadata(
+        log_source=LogSource(uri="/var/log/app.log", name="Application log"),
+        source_identity=LogSourceIdentity(hostname="web-01", service_name="payments"),
+        time_envelope=LogTimeEnvelope(start_at="2026-04-15T00:00:00Z",
+                                      end_at="2026-04-15T23:59:59Z"),
+    ),
+    label="incident-2026-05",
+)
+print(job.id, job.combined_hash)
+
+# Wait for the qualified anchor (next batch, up to 11 min), then verify locally.
+proof = tb.anchor_log_wait(job.id)
+assert proof.verification_status == "VERIFIED"
+assert tb.verify(proof.proof)
+```
+
 ## Requirements
 
 - Python 3.9+

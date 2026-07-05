@@ -33,6 +33,8 @@ from ._models import (
     AiTimeEnvelope, AiDecisionMetadata, AiDecisionJob, AiDecisionProof,
     SignatureDetail, VerificationReport, VerificationJob, CertificateValidationResult,
     AuditProofStep, AuditEvent, AuditEventProof, AuditExportJob,
+    LogSource, LogTimeEnvelope, LogSourceIdentity, LogMetadata,
+    LogAnchorJob, LogStatus, LogAnchorListItem, LogProof,
 )
 from ._exceptions import (
     TrustBeatError,
@@ -61,6 +63,14 @@ __all__ = [
     "AuditEvent",
     "AuditEventProof",
     "AuditExportJob",
+    "LogSource",
+    "LogTimeEnvelope",
+    "LogSourceIdentity",
+    "LogMetadata",
+    "LogAnchorJob",
+    "LogStatus",
+    "LogAnchorListItem",
+    "LogProof",
     # Exceptions
     "TrustBeatError",
     "AuthError",
@@ -70,4 +80,4 @@ __all__ = [
     "VerificationError",
 ]
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"

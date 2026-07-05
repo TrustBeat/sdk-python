@@ -18,6 +18,10 @@ from unittest.mock import MagicMock, patch
 
 from trustbeat import TrustBeat, AnchorJob, AnchorProof, AiDecisionJob, AiDecisionProof
 from trustbeat._models import AiDecisionMetadata, AiTimeEnvelope, BatchSubmission
+from trustbeat import (
+    LogMetadata, LogSource, LogSourceIdentity, LogTimeEnvelope,
+    LogAnchorJob, LogStatus, LogAnchorListItem, LogProof,
+)
 from trustbeat._exceptions import AuthError, NotFoundError, QuotaError, RateLimitError, TrustBeatError
 
 
@@ -536,6 +540,153 @@ class TestExportAuditEvents(unittest.TestCase):
         self.assertEqual(body["from"], "2026-04-15T00:00:00Z")
         self.assertEqual(body["to"], "2026-04-16T00:00:00Z")
         self.assertEqual(body["trail_category"], "financial")
+
+
+def _log_meta():
+    return LogMetadata(
+        log_source=LogSource(uri="/var/log/app.log", name="App log", size_bytes=2048),
+        source_identity=LogSourceIdentity(hostname="host-1", service_name="payment-service"),
+        time_envelope=LogTimeEnvelope(start_at="2026-04-15T00:00:00Z", end_at="2026-04-15T23:59:59Z"),
+    )
+
+
+def _log_accepted_payload(tid="log-1"):
+    return {
+        "id": tid,
+        "log_hash": "a" * 64,
+        "combined_hash": "c" * 64,
+        "status": "pending",
+        "submitted_at": "2026-04-15T10:00:00Z",
+        "overage": False,
+        "label": "incident-2026-05",
+    }
+
+
+def _log_proof_payload(tid="log-1", status="VERIFIED"):
+    return {
+        "id": tid,
+        "log_hash": "a" * 64,
+        "combined_hash": "c" * 64,
+        "metadata": {
+            "log_source": {"uri": "/var/log/app.log", "name": "App log", "size_bytes": 2048},
+            "source_identity": {"hostname": "host-1", "service_name": "payment-service"},
+            "time_envelope": {"start_at": "2026-04-15T00:00:00Z", "end_at": "2026-04-15T23:59:59Z"},
+        },
+        "verification_status": status,
+        "archive_stamps_count": 0,
+        "anchored_at": "2026-04-15T10:10:00Z" if status != "PENDING" else None,
+        "proof": _proof_payload(tid) if status == "VERIFIED" else None,
+    }
+
+
+class TestAnchorLog(unittest.TestCase):
+
+    @patch("urllib.request.urlopen")
+    def test_returns_log_anchor_job(self, mock_urlopen):
+        mock_urlopen.return_value = _fake_response(_log_accepted_payload())
+        job = TrustBeat(api_key="tb_live_test").anchor_log("a" * 64, _log_meta(), label="incident-2026-05")
+        self.assertIsInstance(job, LogAnchorJob)
+        self.assertEqual(job.id, "log-1")
+        self.assertEqual(job.combined_hash, "c" * 64)
+        self.assertEqual(job.label, "incident-2026-05")
+        self.assertFalse(job.overage)
+
+    @patch("urllib.request.urlopen")
+    def test_sends_log_hash_metadata_and_label(self, mock_urlopen):
+        mock_urlopen.return_value = _fake_response(_log_accepted_payload())
+        TrustBeat(api_key="tb_live_test").anchor_log("b" * 64, _log_meta(), label="lbl")
+        body = json.loads(mock_urlopen.call_args[0][0].data.decode())
+        self.assertEqual(body["log_hash"], "b" * 64)
+        self.assertEqual(body["label"], "lbl")
+        self.assertEqual(body["metadata"]["log_source"]["uri"], "/var/log/app.log")
+        self.assertEqual(body["metadata"]["log_source"]["size_bytes"], 2048)
+        self.assertEqual(body["metadata"]["source_identity"]["service_name"], "payment-service")
+        self.assertEqual(body["metadata"]["time_envelope"]["end_at"], "2026-04-15T23:59:59Z")
+        # None optionals are omitted, not sent as null.
+        self.assertNotIn("system_uuid", body["metadata"]["source_identity"])
+
+    @patch("urllib.request.urlopen")
+    def test_omits_label_and_time_envelope_when_absent(self, mock_urlopen):
+        mock_urlopen.return_value = _fake_response(_log_accepted_payload())
+        meta = LogMetadata(
+            log_source=LogSource(uri="/var/log/x.log"),
+            source_identity=LogSourceIdentity(),
+        )
+        TrustBeat(api_key="tb_live_test").anchor_log("a" * 64, meta)
+        body = json.loads(mock_urlopen.call_args[0][0].data.decode())
+        self.assertNotIn("label", body)
+        self.assertNotIn("time_envelope", body["metadata"])
+        self.assertEqual(body["metadata"]["source_identity"], {})
+        self.assertNotIn("name", body["metadata"]["log_source"])
+
+
+class TestGetLogProof(unittest.TestCase):
+
+    @patch("urllib.request.urlopen")
+    def test_returns_proof_when_verified(self, mock_urlopen):
+        mock_urlopen.return_value = _fake_response(_log_proof_payload())
+        proof = TrustBeat(api_key="tb_live_test").get_log_proof("log-1")
+        self.assertIsInstance(proof, LogProof)
+        self.assertEqual(proof.verification_status, "VERIFIED")
+        self.assertEqual(proof.metadata.log_source.uri, "/var/log/app.log")
+        self.assertIsNotNone(proof.proof)
+        self.assertTrue(TrustBeat(api_key="tb_live_test").verify(proof.proof))
+
+    @patch("urllib.request.urlopen")
+    def test_returns_none_when_pending(self, mock_urlopen):
+        mock_urlopen.return_value = _fake_response(_log_proof_payload(status="PENDING"))
+        result = TrustBeat(api_key="tb_live_test").get_log_proof("log-1")
+        self.assertIsNone(result)
+
+    @patch("urllib.request.urlopen")
+    def test_raises_not_found_for_unknown_id(self, mock_urlopen):
+        mock_urlopen.side_effect = _fake_http_error(404, {"error": {"code": "NOT_FOUND", "message": "nope"}})
+        with self.assertRaises(NotFoundError):
+            TrustBeat(api_key="tb_live_test").get_log_proof("unknown")
+
+
+class TestLogStatusListExport(unittest.TestCase):
+
+    @patch("urllib.request.urlopen")
+    def test_get_log_status(self, mock_urlopen):
+        mock_urlopen.return_value = _fake_response(
+            {"id": "log-1", "status": "anchored", "submitted_at": "2026-04-15T10:00:00Z",
+             "anchored_at": "2026-04-15T10:10:00Z"})
+        st = TrustBeat(api_key="tb_live_test").get_log_status("log-1")
+        self.assertIsInstance(st, LogStatus)
+        self.assertEqual(st.status, "anchored")
+        self.assertEqual(st.anchored_at, "2026-04-15T10:10:00Z")
+
+    @patch("urllib.request.urlopen")
+    def test_list_logs_builds_query_and_parses(self, mock_urlopen):
+        mock_urlopen.return_value = _fake_response({"logs": [
+            {"id": "log-1", "log_hash": "a" * 64, "status": "anchored",
+             "submitted_at": "2026-04-15T10:00:00Z", "log_source_uri": "/var/log/app.log",
+             "service_name": "payment-service", "label": "x"},
+        ], "total": 1})
+        logs = TrustBeat(api_key="tb_live_test").list_logs(
+            status="anchored", from_ts="2026-04-01T00:00:00Z", to_ts="2026-04-30T00:00:00Z")
+        url = mock_urlopen.call_args[0][0].full_url
+        self.assertIn("status=anchored", url)
+        self.assertIn("from=2026-04-01T00:00:00Z", url)
+        self.assertIn("to=2026-04-30T00:00:00Z", url)
+        self.assertEqual(len(logs), 1)
+        self.assertIsInstance(logs[0], LogAnchorListItem)
+        self.assertEqual(logs[0].log_source_uri, "/var/log/app.log")
+
+    @patch("urllib.request.urlopen")
+    def test_export_log_returns_bytes(self, mock_urlopen):
+        raw = json.dumps({"bundle_type": "trustbeat.log.proof", "id": "log-1"}).encode()
+        mock = MagicMock()
+        mock.__enter__ = MagicMock(return_value=mock)
+        mock.__exit__ = MagicMock(return_value=False)
+        mock.read.return_value = raw
+        mock.headers = {"Content-Type": "application/json"}
+        mock_urlopen.return_value = mock
+        blob = TrustBeat(api_key="tb_live_test").export_log("log-1")
+        self.assertIsInstance(blob, (bytes, bytearray))
+        self.assertEqual(blob, raw)
+        self.assertIn("trustbeat.log.proof", blob.decode())
 
 
 if __name__ == "__main__":

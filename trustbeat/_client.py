@@ -22,7 +22,7 @@ from ._models import (
 from ._verify import verify_proof
 
 _DEFAULT_BASE_URL = "https://api.trustbeat.eu"
-_SDK_VERSION = "0.1.1"
+_SDK_VERSION = "0.2.0"
 
 
 class TrustBeat:
@@ -653,6 +653,128 @@ class TrustBeat:
                 raise TimeoutError(f"Audit export job {job_id} did not complete within 300 s.")
             _time.sleep(3)
 
+    # ── Tamper-Evident Logs (NIS2) ──────────────────────────────────────────────
+
+    def anchor_log(
+        self,
+        log_hash: str,
+        metadata: "LogMetadata",
+        *,
+        label: str | None = None,
+    ) -> "LogAnchorJob":
+        """
+        Submit a log hash for NIS2 Article 21 tamper-evident anchoring.
+
+        Returns immediately (202 Accepted) with a tracking ID; the log is anchored
+        in the next batch cycle (~10 minutes). The server binds *metadata* into the
+        Merkle leaf via ``combined_hash = SHA-256(log_hash_bytes || UTF-8(JCS(metadata)))``,
+        so the proof covers both the log content and its context.
+
+        :param log_hash: SHA-256 hex digest of the log content (64 hex chars).
+        :param metadata: :class:`LogMetadata` describing the log source and identity.
+        :param label: Optional free-text label for cross-referencing your own IDs.
+        :returns: :class:`LogAnchorJob`.
+        """
+        from ._models import _log_metadata_to_dict, _parse_log_anchor_job
+        body: dict[str, Any] = {"log_hash": log_hash, "metadata": _log_metadata_to_dict(metadata)}
+        if label is not None:
+            body["label"] = label
+        data = self._request("POST", "/v1/logs/anchor", body)
+        return _parse_log_anchor_job(data)
+
+    def get_log_proof(self, tracking_id: str) -> "LogProof | None":
+        """
+        Fetch the verification result for a previously submitted log anchor.
+
+        Returns ``None`` if the log is still pending (not yet anchored) — i.e. the
+        endpoint reports ``verification_status="PENDING"``. Raises
+        :exc:`NotFoundError` if the tracking ID is unknown.
+
+        :param tracking_id: ID returned by :meth:`anchor_log`.
+        """
+        from ._models import _parse_log_proof
+        data = self._request("GET", f"/v1/logs/verify/{tracking_id}")
+        # Before anchoring the endpoint returns 200 with verification_status
+        # "PENDING" and no proof — treat that as "not ready yet" so callers poll.
+        if data.get("verification_status") == "PENDING":
+            return None
+        return _parse_log_proof(data)
+
+    def get_log_status(self, tracking_id: str) -> "LogStatus":
+        """
+        Get the lightweight status of a log anchor submission.
+
+        Returns ``{id, status, submitted_at, anchored_at}`` without the full proof —
+        useful for cheap polling. Raises :exc:`NotFoundError` if the ID is unknown.
+
+        :param tracking_id: ID returned by :meth:`anchor_log`.
+        """
+        from ._models import _parse_log_status
+        data = self._request("GET", f"/v1/logs/{tracking_id}/status")
+        return _parse_log_status(data)
+
+    def list_logs(
+        self,
+        *,
+        status: str | None = None,
+        from_ts: str | None = None,
+        to_ts: str | None = None,
+    ) -> list["LogAnchorListItem"]:
+        """
+        List recent log anchor submissions for the authenticated account.
+
+        :param status: Filter by ``"pending"`` or ``"anchored"`` (optional).
+        :param from_ts: ISO 8601 lower bound on ``submitted_at`` (optional).
+        :param to_ts: ISO 8601 upper bound on ``submitted_at`` (optional).
+        :returns: List of :class:`LogAnchorListItem`.
+        """
+        from ._models import _parse_log_anchor_list_item
+        params: list[str] = []
+        if status:  params.append(f"status={status}")
+        if from_ts: params.append(f"from={from_ts}")
+        if to_ts:   params.append(f"to={to_ts}")
+        path = "/v1/logs" + ("?" + "&".join(params) if params else "")
+        data = self._request("GET", path)
+        return [_parse_log_anchor_list_item(x) for x in data.get("logs", [])]
+
+    def export_log(self, tracking_id: str) -> bytes:
+        """
+        Download a portable NIS2 log proof bundle (``bundle_type="trustbeat.log.proof"``).
+
+        Returns the raw JSON bundle bytes — write them to a ``.json`` file for offline
+        verification. Raises :exc:`NotFoundError` if the ID is unknown or not anchored.
+
+        :param tracking_id: ID returned by :meth:`anchor_log`.
+        :returns: Raw proof-bundle bytes.
+        """
+        raw = self._request_raw("GET", f"/v1/logs/{tracking_id}/export")
+        return raw["body"]
+
+    def anchor_log_wait(
+        self,
+        tracking_id: str,
+        *,
+        timeout_secs: float = 660.0,
+        poll_interval_secs: float = 15.0,
+    ) -> "LogProof":
+        """
+        Poll :meth:`get_log_proof` until the log is anchored, then return the proof.
+
+        :param tracking_id: ID returned by :meth:`anchor_log`.
+        :param timeout_secs: Max seconds to wait (default 660 = 11 min).
+        :param poll_interval_secs: Seconds between polls (default 15).
+        :raises TimeoutError: if the proof is not ready within *timeout_secs*.
+        """
+        import time as _time
+        deadline = _time.monotonic() + timeout_secs
+        while True:
+            proof = self.get_log_proof(tracking_id)
+            if proof is not None:
+                return proof
+            if _time.monotonic() > deadline:
+                raise TimeoutError(f"Log {tracking_id} not anchored within {timeout_secs:.0f} s.")
+            _time.sleep(poll_interval_secs)
+
     # ── Internal HTTP ──────────────────────────────────────────────────────────
 
     def _request_raw(self, method: str, path: str) -> dict:
@@ -672,7 +794,7 @@ class TrustBeat:
                 body_bytes = resp.read()
                 if ct.startswith("application/zip"):
                     return {"content_type": ct, "body": body_bytes}
-                return {"content_type": ct, "json": json.loads(body_bytes.decode())}
+                return {"content_type": ct, "body": body_bytes, "json": json.loads(body_bytes.decode())}
         except urllib.error.HTTPError as exc:
             raw = exc.read().decode(errors="replace")
             try:

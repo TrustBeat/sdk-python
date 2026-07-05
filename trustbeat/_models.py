@@ -432,3 +432,186 @@ def _parse_cert_validation_result(d: dict) -> CertificateValidationResult:
     )
 
 
+
+# ── Tamper-Evident Logs (NIS2) models ─────────────────────────────────────────
+
+@dataclass
+class LogSource:
+    """Identifies the log source being anchored."""
+    uri: str                        # file path, S3 URI, syslog identifier, etc.
+    name: str | None = None         # human-readable name
+    size_bytes: int | None = None   # size of the log file/stream
+
+
+@dataclass
+class LogTimeEnvelope:
+    """Time window covered by the anchored log."""
+    start_at: str   # ISO 8601 — start of the log window
+    end_at: str     # ISO 8601 — end of the log window
+
+
+@dataclass
+class LogSourceIdentity:
+    """Identity of the system that emitted the log (all fields optional)."""
+    system_uuid: str | None = None
+    cloud_instance_id: str | None = None
+    hostname: str | None = None
+    service_name: str | None = None
+    tenant_id: str | None = None
+
+
+@dataclass
+class LogMetadata:
+    """
+    Metadata sealed alongside a log hash for NIS2 Article 21 anchoring.
+
+    The server computes ``combined_hash = SHA-256(log_hash_bytes || UTF-8(JCS(metadata)))``
+    — the canonical metadata is bound into the Merkle leaf, so the anchor proves both
+    the log content and this context.
+
+    ``log_source`` and ``source_identity`` are required; ``time_envelope`` is optional.
+    """
+    log_source: LogSource
+    source_identity: LogSourceIdentity
+    time_envelope: LogTimeEnvelope | None = None
+
+
+@dataclass
+class LogAnchorJob:
+    """Returned immediately (202) when a log hash is enqueued for anchoring."""
+    id: str
+    log_hash: str
+    combined_hash: str  # SHA-256(log_hash_bytes || UTF-8(JCS(metadata)))
+    status: str         # always "pending" at creation
+    submitted_at: str   # ISO 8601
+    overage: bool
+    label: str | None = None
+
+
+@dataclass
+class LogStatus:
+    """Lightweight status of a log anchor submission (get_log_status())."""
+    id: str
+    status: str                 # "pending" | "anchored"
+    submitted_at: str           # ISO 8601
+    anchored_at: str | None = None
+
+
+@dataclass
+class LogAnchorListItem:
+    """A single log anchor submission as returned by the list endpoint."""
+    id: str
+    log_hash: str
+    status: str                 # "pending" | "anchored"
+    submitted_at: str           # ISO 8601
+    log_source_uri: str
+    anchored_at: str | None = None
+    service_name: str | None = None
+    label: str | None = None
+
+
+@dataclass
+class LogProof:
+    """
+    Verification result for an anchored log (get_log_proof()).
+
+    ``verification_status`` is ``"VERIFIED"`` when the Merkle proof is valid and the
+    combined hash in the leaf matches. ``proof`` contains the full Merkle inclusion
+    proof with the qualified RFC 3161 token (``None`` when not VERIFIED).
+    """
+    id: str
+    log_hash: str
+    metadata: LogMetadata
+    combined_hash: str
+    verification_status: str        # "VERIFIED" | "FAILED"
+    archive_stamps_count: int
+    anchored_at: str | None = None
+    proof: AnchorProof | None = None
+    failure_reasons: list[str] | None = None
+
+
+def _parse_log_anchor_job(d: dict) -> LogAnchorJob:
+    return LogAnchorJob(
+        id            = d["id"],
+        log_hash      = d["log_hash"],
+        combined_hash = d["combined_hash"],
+        status        = d["status"],
+        submitted_at  = d["submitted_at"],
+        overage       = d.get("overage", False),
+        label         = d.get("label"),
+    )
+
+
+def _parse_log_status(d: dict) -> LogStatus:
+    return LogStatus(
+        id           = d["id"],
+        status       = d["status"],
+        submitted_at = d["submitted_at"],
+        anchored_at  = d.get("anchored_at"),
+    )
+
+
+def _parse_log_anchor_list_item(d: dict) -> LogAnchorListItem:
+    return LogAnchorListItem(
+        id             = d["id"],
+        log_hash       = d["log_hash"],
+        status         = d["status"],
+        submitted_at   = d["submitted_at"],
+        log_source_uri = d["log_source_uri"],
+        anchored_at    = d.get("anchored_at"),
+        service_name   = d.get("service_name"),
+        label          = d.get("label"),
+    )
+
+
+def _parse_log_metadata(d: dict) -> LogMetadata:
+    src = d["log_source"]
+    ident = d.get("source_identity", {}) or {}
+    te = d.get("time_envelope")
+    return LogMetadata(
+        log_source=LogSource(
+            uri=src["uri"],
+            name=src.get("name"),
+            size_bytes=src.get("size_bytes"),
+        ),
+        source_identity=LogSourceIdentity(
+            system_uuid=ident.get("system_uuid"),
+            cloud_instance_id=ident.get("cloud_instance_id"),
+            hostname=ident.get("hostname"),
+            service_name=ident.get("service_name"),
+            tenant_id=ident.get("tenant_id"),
+        ),
+        time_envelope=LogTimeEnvelope(start_at=te["start_at"], end_at=te["end_at"]) if te else None,
+    )
+
+
+def _parse_log_proof(d: dict) -> LogProof:
+    return LogProof(
+        id                   = d["id"],
+        log_hash             = d["log_hash"],
+        metadata             = _parse_log_metadata(d["metadata"]),
+        combined_hash        = d["combined_hash"],
+        verification_status  = d["verification_status"],
+        archive_stamps_count = d.get("archive_stamps_count", 0),
+        anchored_at          = d.get("anchored_at"),
+        proof                = _parse_proof(d["proof"]) if d.get("proof") else None,
+        failure_reasons      = d.get("failure_reasons"),
+    )
+
+
+def _log_metadata_to_dict(m: LogMetadata) -> dict:
+    """Serialize LogMetadata for the anchor request, omitting None optionals."""
+    src: dict = {"uri": m.log_source.uri}
+    if m.log_source.name is not None:       src["name"] = m.log_source.name
+    if m.log_source.size_bytes is not None: src["size_bytes"] = m.log_source.size_bytes
+
+    ident: dict = {}
+    for k in ("system_uuid", "cloud_instance_id", "hostname", "service_name", "tenant_id"):
+        v = getattr(m.source_identity, k)
+        if v is not None:
+            ident[k] = v
+
+    out: dict = {"log_source": src, "source_identity": ident}
+    if m.time_envelope is not None:
+        out["time_envelope"] = {"start_at": m.time_envelope.start_at, "end_at": m.time_envelope.end_at}
+    return out
