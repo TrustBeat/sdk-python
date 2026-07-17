@@ -48,3 +48,13 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@67339c736fd9354cd4f8cb0b744f2b82a74b5c70  # v1.12.3
+
+      # Dogfood: qualified timestamp for the exact sdist+wheel just published.
+      # Evidence step only — must never turn a completed publish red.
+      - name: Anchor release artifacts (TrustBeat)
+        continue-on-error: true
+        uses: TrustBeat/anchor-action@a5eb4451717f36d7bd1b6142a473003031f27512  # v1.0.0
+        with:
+          api-key: ${{ secrets.TRUSTBEAT_API_KEY }}
+          files: dist/*
+          description: "trustbeat-python ${{ github.ref_name }}"
