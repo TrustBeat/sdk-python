@@ -28,6 +28,7 @@ Quick start::
 """
 
 from ._client import TrustBeat
+from ._webhook import verify_webhook_signature
 from ._models import (
     AnchorJob, AnchorProof, ProofStep,
     AiTimeEnvelope, AiDecisionMetadata, AiDecisionJob, AiDecisionProof,
@@ -47,6 +48,7 @@ from ._exceptions import (
 
 __all__ = [
     "TrustBeat",
+    "verify_webhook_signature",
     # Models
     "AnchorJob",
     "AnchorProof",
@@ -80,4 +82,4 @@ __all__ = [
     "VerificationError",
 ]
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"

@@ -689,5 +689,50 @@ class TestLogStatusListExport(unittest.TestCase):
         self.assertIn("trustbeat.log.proof", blob.decode())
 
 
+class TestExportBundles(unittest.TestCase):
+
+    @staticmethod
+    def _json_raw_response(payload: dict):
+        raw = json.dumps(payload).encode()
+        mock = MagicMock()
+        mock.__enter__ = MagicMock(return_value=mock)
+        mock.__exit__ = MagicMock(return_value=False)
+        mock.read.return_value = raw
+        mock.headers = {"Content-Type": "application/json"}
+        return mock, raw
+
+    @patch("urllib.request.urlopen")
+    def test_export_ai_decision_returns_bytes(self, mock_urlopen):
+        mock, raw = self._json_raw_response(
+            {"bundle_type": "trustbeat.ai.proof", "id": "dec-1"}
+        )
+        mock_urlopen.return_value = mock
+        blob = TrustBeat(api_key="tb_live_test").export_ai_decision("dec-1")
+        self.assertEqual(blob, raw)
+        self.assertIn("trustbeat.ai.proof", blob.decode())
+        req = mock_urlopen.call_args[0][0]
+        self.assertTrue(req.full_url.endswith("/v1/ai/decisions/dec-1/export"))
+
+    @patch("urllib.request.urlopen")
+    def test_export_verification_returns_bytes(self, mock_urlopen):
+        mock, raw = self._json_raw_response(
+            {"bundle_type": "trustbeat.verification.proof", "id": "ver-1"}
+        )
+        mock_urlopen.return_value = mock
+        blob = TrustBeat(api_key="tb_live_test").export_verification("ver-1")
+        self.assertEqual(blob, raw)
+        self.assertIn("trustbeat.verification.proof", blob.decode())
+        req = mock_urlopen.call_args[0][0]
+        self.assertTrue(req.full_url.endswith("/v1/verify/ver-1/export"))
+
+    @patch("urllib.request.urlopen")
+    def test_export_ai_decision_not_found(self, mock_urlopen):
+        mock_urlopen.side_effect = _fake_http_error(
+            404, {"error": {"message": "Unknown ID", "code": "NOT_FOUND"}}
+        )
+        with self.assertRaises(TrustBeatError):
+            TrustBeat(api_key="tb_live_test").export_ai_decision("nope")
+
+
 if __name__ == "__main__":
     unittest.main()

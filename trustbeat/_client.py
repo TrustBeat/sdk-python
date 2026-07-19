@@ -22,7 +22,7 @@ from ._models import (
 from ._verify import verify_proof
 
 _DEFAULT_BASE_URL = "https://api.trustbeat.eu"
-_SDK_VERSION = "0.2.0"
+_SDK_VERSION = "0.3.0"
 
 
 class TrustBeat:
@@ -397,6 +397,20 @@ class TrustBeat:
                 )
             time.sleep(min(poll_interval, remaining))
 
+    def export_ai_decision(self, tracking_id: str) -> bytes:
+        """
+        Download a portable AI Act proof bundle (``bundle_type="trustbeat.ai.proof"``).
+
+        Returns the raw JSON bundle bytes — write them to a ``.json`` file for
+        offline verification. Raises :exc:`NotFoundError` if the ID is unknown
+        or the decision is not yet anchored.
+
+        :param tracking_id: ID returned by :meth:`anchor_ai_decision`.
+        :returns: Raw proof-bundle bytes.
+        """
+        raw = self._request_raw("GET", f"/v1/ai/decisions/{tracking_id}/export")
+        return raw["body"]
+
     # ── Signature & certificate verification ──────────────────────────────────
 
     def verify_signature(
@@ -471,6 +485,21 @@ class TrustBeat:
         """
         data = self._request("GET", f"/v1/verify/{tracking_id}")
         return _parse_verification_report(data)
+
+    def export_verification(self, tracking_id: str) -> bytes:
+        """
+        Download a portable verification proof bundle
+        (``bundle_type="trustbeat.verification.proof"``).
+
+        Returns the raw JSON bundle bytes — write them to a ``.json`` file for
+        offline verification. Raises :exc:`NotFoundError` if the ID is unknown.
+
+        :param tracking_id: ID returned by :meth:`verify_signature` or
+            :meth:`verify_and_anchor`.
+        :returns: Raw proof-bundle bytes.
+        """
+        raw = self._request_raw("GET", f"/v1/verify/{tracking_id}/export")
+        return raw["body"]
 
     def validate_certificate(self, certificate: bytes) -> CertificateValidationResult:
         """
@@ -774,6 +803,28 @@ class TrustBeat:
             if _time.monotonic() > deadline:
                 raise TimeoutError(f"Log {tracking_id} not anchored within {timeout_secs:.0f} s.")
             _time.sleep(poll_interval_secs)
+
+    # ── Webhooks ───────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def verify_webhook_signature(
+        payload: bytes | str,
+        signature_header: str,
+        secret: str,
+        *,
+        tolerance_secs: int = 300,
+    ) -> bool:
+        """
+        Verify the ``X-TrustBeat-Signature`` header of a webhook delivery.
+
+        Pass the **raw request body** exactly as received. Returns ``True`` if
+        the signature is valid and the timestamp is within *tolerance_secs*.
+        See :func:`trustbeat.verify_webhook_signature` for details.
+        """
+        from ._webhook import verify_webhook_signature as _verify
+        return _verify(
+            payload, signature_header, secret, tolerance_secs=tolerance_secs
+        )
 
     # ── Internal HTTP ──────────────────────────────────────────────────────────
 
