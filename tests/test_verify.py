@@ -228,3 +228,40 @@ class MerkleAlgorithmDispatchTest(unittest.TestCase):
         # Two-leaf tree whose BOTH leaf hashes are upstream vectors.
         # Exercises side="left", which no other rfc6962 test reaches.
         self.assertTrue(_verify(_proof("4c313233343536", "bf9ae70442844df993ca0001a7c8a095c5f145857960b1ee389df6cbe84b5bf3", (("6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d", "left"),), RFC6962_SHA256)))
+
+
+class Rfc6962SharedFixtureTest(unittest.TestCase):
+    """Agreement with tests/fixtures/rfc6962-proofs.json.
+
+    The same file is checked by the Scala engine and by every other SDK, so this
+    pins cross-implementation agreement rather than self-consistency.
+    """
+
+    @staticmethod
+    def _fixture():
+        import json, pathlib
+        here = pathlib.Path(__file__).resolve()
+        for parent in here.parents:
+            f = parent / "tests" / "fixtures" / "rfc6962-proofs.json"
+            if f.exists():
+                return json.loads(f.read_text())
+        raise AssertionError("rfc6962-proofs.json not found")
+
+    def test_every_fixture_proof_verifies(self):
+        doc = self._fixture()
+        for p in doc["proofs"]:
+            proof = _proof(
+                p["hash"], p["merkle_root"],
+                tuple((s["sibling"], s["side"]) for s in p["proof_path"]),
+                p["merkle_algorithm"],
+            )
+            self.assertTrue(_verify(proof), f"leaf {p['leaf_index']} failed")
+
+    def test_a_tampered_fixture_proof_fails(self):
+        # Guards against the suite passing because verification is a no-op.
+        doc = self._fixture()
+        p = doc["proofs"][0]
+        bad = _proof("00" * 32, p["merkle_root"],
+                     tuple((s["sibling"], s["side"]) for s in p["proof_path"]),
+                     p["merkle_algorithm"])
+        self.assertFalse(_verify(bad))
