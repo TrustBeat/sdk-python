@@ -22,7 +22,7 @@ from ._models import (
 from ._verify import verify_proof
 
 _DEFAULT_BASE_URL = "https://api.trustbeat.eu"
-_SDK_VERSION = "0.3.0"
+_SDK_VERSION = "0.4.0"
 
 
 class TrustBeat:

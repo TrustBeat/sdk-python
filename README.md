@@ -101,3 +101,28 @@ Full API reference and guides at [api.trustbeat.eu/docs](https://api.trustbeat.e
 ## License
 
 MIT — see [LICENSE](LICENSE)
+
+
+### Merkle algorithm
+
+Every proof declares how it must be folded, in `proof.merkle_algorithm`:
+
+| Value | Construction |
+|---|---|
+| `trustbeat-legacy-sha256` | leaf = your hash, parent = `SHA-256(left \|\| right)` |
+| `rfc6962-sha256` | leaf = `SHA-256(0x00 \|\| hash)`, parent = `SHA-256(0x01 \|\| left \|\| right)` |
+
+`verify()` dispatches on it for you. A proof with no label was issued before the
+field existed and is legacy. If a proof declares an algorithm this SDK version
+does not implement, `verify()` raises `UnsupportedAlgorithmError` rather than
+returning `False` — "cannot check" is not "invalid".
+
+```python
+from trustbeat import UnsupportedAlgorithmError
+
+try:
+    ok = tb.verify(proof)
+except UnsupportedAlgorithmError:
+    # This SDK is older than the proof. Upgrade, or check it server-side.
+    raise
+```

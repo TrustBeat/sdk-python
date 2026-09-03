@@ -5,6 +5,14 @@ from __future__ import annotations
 import base64
 from dataclasses import dataclass
 
+#: Wire name of the original TrustBeat Merkle construction: the leaf is your hash
+#: unchanged, parents are ``SHA-256(left || right)``, an odd node is duplicated.
+LEGACY_SHA256 = "trustbeat-legacy-sha256"
+
+#: Wire name of the RFC 6962 / RFC 9162 construction: leaves are
+#: ``SHA-256(0x00 || entry)``, parents are ``SHA-256(0x01 || left || right)``.
+RFC6962_SHA256 = "rfc6962-sha256"
+
 
 @dataclass
 class ProofStep:
@@ -49,6 +57,12 @@ class AnchorProof:
     anchored_at: str          # ISO 8601
     client_ref: str | None
     description: str | None
+    #: Which Merkle construction produced ``merkle_root``. Proofs issued before
+    #: this field existed omit it, and those are all ``trustbeat-legacy-sha256``.
+    merkle_algorithm: str = LEGACY_SHA256
+    #: Leaves in the batch (RFC 6962 tree size). ``None`` when the API did not
+    #: report it. Advisory under the legacy algorithm.
+    tree_size: int | None = None
 
 
 @dataclass
@@ -164,6 +178,8 @@ def _parse_proof(data: dict) -> AnchorProof:
         anchored_at=data["anchored_at"],
         client_ref=data.get("client_ref"),
         description=data.get("description"),
+        merkle_algorithm=data.get("merkle_algorithm") or LEGACY_SHA256,
+        tree_size=data.get("tree_size"),
     )
 
 

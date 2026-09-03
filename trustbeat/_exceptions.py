@@ -37,5 +37,15 @@ class RateLimitError(TrustBeatError):
     """Too many requests (HTTP 429). Back off and retry."""
 
 
+class UnsupportedAlgorithmError(TrustBeatError):
+    """
+    The proof declares a ``merkle_algorithm`` this SDK version does not implement.
+
+    This is deliberately NOT a ``VerificationError`` and never a ``False`` return:
+    "I cannot check this proof" must not be mistaken for "this proof is forged".
+    Upgrade the SDK, or verify server-side via the API.
+    """
+
+
 class VerificationError(TrustBeatError):
     """Local Merkle proof verification failed."""

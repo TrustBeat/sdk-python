@@ -164,3 +164,67 @@ class TestVerifyErrors(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ── merkle_algorithm dispatch (SDK 0.4.0) ────────────────────────────────────
+
+from trustbeat import LEGACY_SHA256, RFC6962_SHA256, UnsupportedAlgorithmError
+from trustbeat._verify import verify_proof as _verify
+
+
+def _proof(hash_hex, root_hex, path=(), algorithm=None):
+    """Build an AnchorProof; algorithm=None leaves the field at its default."""
+    kwargs = dict(
+        id="p1", hash=hash_hex, hash_algorithm="SHA-256", batch_id="b1",
+        leaf_index=0, merkle_root=root_hex,
+        proof_path=[ProofStep(sibling=s, side=sd) for s, sd in path],
+        token=b"", token_format="RFC3161_DER", tsa_serial="1",
+        provider="test", anchored_at="2026-01-01T00:00:00Z",
+        client_ref=None, description=None,
+    )
+    if algorithm is not None:
+        kwargs["merkle_algorithm"] = algorithm
+    return AnchorProof(**kwargs)
+
+
+class MerkleAlgorithmDispatchTest(unittest.TestCase):
+
+    def test_absent_algorithm_defaults_to_legacy(self):
+        # Proofs issued before the field existed must keep verifying forever.
+        leaf = hashlib.sha256(b"a").hexdigest()
+        self.assertEqual(_proof(leaf, leaf).merkle_algorithm, LEGACY_SHA256)
+        self.assertTrue(_verify(_proof(leaf, leaf)))
+
+    def test_rfc6962_single_leaf_is_not_the_leaf(self):
+        leaf = hashlib.sha256(b"a").digest()
+        rfc_root = hashlib.sha256(b"\x00" + leaf).hexdigest()
+        # Same leaf, same (empty) path — only the algorithm differs.
+        self.assertTrue(_verify(_proof(leaf.hex(), rfc_root, algorithm=RFC6962_SHA256)))
+        self.assertFalse(_verify(_proof(leaf.hex(), leaf.hex(), algorithm=RFC6962_SHA256)))
+
+    def test_rfc6962_matches_the_reference_vector(self):
+        # MTH([SHA256("a"), SHA256("b"), SHA256("c")]) per RFC 6962, leaf 0.
+        a = hashlib.sha256(b"a").hexdigest()
+        path = (("a0d9f0a50b35b9f7d7edc57fb64f4771ddef0fefeaca4e6f949a1514db5b136d", "right"),
+                ("6a3fc11b79f836bda340e75c8906e961b8adf4d6a08a2b992e3f38cd6ff38ebf", "right"))
+        root = "cac3d448d4e20a2ad5eae1f500e63c2a7f9217cd14572ba7fd22e26dc1ec2648"
+        self.assertTrue(_verify(_proof(a, root, path, RFC6962_SHA256)))
+
+    def test_unknown_algorithm_raises_rather_than_returning_false(self):
+        # "I cannot check this" must not look like "this proof is forged".
+        leaf = hashlib.sha256(b"a").hexdigest()
+        with self.assertRaises(UnsupportedAlgorithmError):
+            _verify(_proof(leaf, leaf, algorithm="sha3-512-tree"))
+
+    # Vectors below are taken verbatim from Google's transparency-dev/merkle
+    # (rfc6962_test.go) — a third-party implementation. Our own arithmetic only
+    # proves self-consistency; these prove conformance.
+
+    def test_leaf_hash_matches_the_upstream_rfc6962_vector(self):
+        # SHA-256(0x00 || "L123456") per transparency-dev/merkle.
+        self.assertTrue(_verify(_proof("4c313233343536", "395aa064aa4c29f7010acfe3f25db9485bbd4b91897b6ad7ad547639252b4d56", (), RFC6962_SHA256)))
+
+    def test_rfc6962_left_sibling_applies_the_node_prefix(self):
+        # Two-leaf tree whose BOTH leaf hashes are upstream vectors.
+        # Exercises side="left", which no other rfc6962 test reaches.
+        self.assertTrue(_verify(_proof("4c313233343536", "bf9ae70442844df993ca0001a7c8a095c5f145857960b1ee389df6cbe84b5bf3", (("6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d", "left"),), RFC6962_SHA256)))

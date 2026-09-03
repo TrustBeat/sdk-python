@@ -31,6 +31,7 @@ from ._client import TrustBeat
 from ._webhook import verify_webhook_signature
 from ._models import (
     AnchorJob, AnchorProof, ProofStep,
+    LEGACY_SHA256, RFC6962_SHA256,
     AiTimeEnvelope, AiDecisionMetadata, AiDecisionJob, AiDecisionProof,
     SignatureDetail, VerificationReport, VerificationJob, CertificateValidationResult,
     AuditProofStep, AuditEvent, AuditEventProof, AuditExportJob,
@@ -44,6 +45,7 @@ from ._exceptions import (
     QuotaError,
     RateLimitError,
     VerificationError,
+    UnsupportedAlgorithmError,
 )
 
 __all__ = [
@@ -80,6 +82,9 @@ __all__ = [
     "QuotaError",
     "RateLimitError",
     "VerificationError",
+    "UnsupportedAlgorithmError",
+    "LEGACY_SHA256",
+    "RFC6962_SHA256",
 ]
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
