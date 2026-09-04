@@ -26,8 +26,12 @@ from __future__ import annotations
 import hashlib
 import hmac
 
-from ._models import AnchorProof, LEGACY_SHA256, RFC6962_SHA256
-from ._exceptions import UnsupportedAlgorithmError, VerificationError
+from ._models import AnchorProof, AuditEventProof, LEGACY_SHA256, RFC6962_SHA256
+from ._exceptions import (
+    IncompleteProofError,
+    UnsupportedAlgorithmError,
+    VerificationError,
+)
 
 # algorithm → (leaf prefix, node prefix)
 _PREFIXES = {
@@ -50,7 +54,22 @@ def verify_proof(proof: AnchorProof) -> bool:
     and ``UnsupportedAlgorithmError`` if the proof declares an algorithm this
     SDK version cannot compute — which is not the same as an invalid proof.
     """
-    algorithm = getattr(proof, "merkle_algorithm", None) or LEGACY_SHA256
+    return _fold_and_compare(
+        leaf_hex   = proof.hash,
+        steps      = proof.proof_path,
+        algorithm  = getattr(proof, "merkle_algorithm", None) or LEGACY_SHA256,
+        root_hex   = proof.merkle_root,
+    )
+
+
+def _fold_and_compare(leaf_hex: str, steps, algorithm: str, root_hex: str) -> bool:
+    """
+    Re-derive the root from ``leaf_hex`` and ``steps`` under ``algorithm`` and
+    compare it to ``root_hex`` in constant time.
+
+    Shared by every proof shape so the fold exists once: an anchor proof and an
+    audit event proof differ only in which field names carry these four values.
+    """
     try:
         leaf_prefix, node_prefix = _PREFIXES[algorithm]
     except KeyError:
@@ -60,13 +79,13 @@ def verify_proof(proof: AnchorProof) -> bool:
         ) from None
 
     try:
-        leaf = bytes.fromhex(proof.hash)
+        leaf = bytes.fromhex(leaf_hex)
     except ValueError as e:
-        raise VerificationError(f"Invalid leaf hash hex: {proof.hash!r}") from e
+        raise VerificationError(f"Invalid leaf hash hex: {leaf_hex!r}") from e
 
     current = hashlib.sha256(leaf_prefix + leaf).digest() if leaf_prefix else leaf
 
-    for i, step in enumerate(proof.proof_path):
+    for i, step in enumerate(steps):
         try:
             sibling = bytes.fromhex(step.sibling)
         except ValueError as e:
@@ -85,8 +104,37 @@ def verify_proof(proof: AnchorProof) -> bool:
         current = hashlib.sha256(node_prefix + combined).digest()
 
     try:
-        expected = bytes.fromhex(proof.merkle_root)
+        expected = bytes.fromhex(root_hex)
     except ValueError as e:
-        raise VerificationError(f"Invalid merkle_root hex: {proof.merkle_root!r}") from e
+        raise VerificationError(f"Invalid merkle_root hex: {root_hex!r}") from e
 
     return hmac.compare_digest(current, expected)
+
+
+def verify_audit_event_proof(proof: AuditEventProof) -> bool:
+    """
+    Verify an audit event's Merkle inclusion proof locally.
+
+    Identical to :func:`verify_proof` but for the audit event shape, which names
+    the leaf ``canonical_hash`` and the path ``merkle_path``.
+
+    Returns ``True`` if valid, ``False`` if the computed root does not match.
+
+    Raises ``IncompleteProofError`` when the proof carries no ``merkle_root``.
+    Servers before API 1.46 did not send one, so there is nothing to fold
+    against — that is "cannot check", never "invalid". Raises
+    ``UnsupportedAlgorithmError`` and ``VerificationError`` on the same terms as
+    :func:`verify_proof`.
+    """
+    if not proof.merkle_root:
+        raise IncompleteProofError(
+            "This audit event proof has no merkle_root, so it cannot be folded "
+            "locally. The server that issued it predates API 1.46. Verify it "
+            "server-side via the API, or re-fetch it from an upgraded server."
+        )
+    return _fold_and_compare(
+        leaf_hex  = proof.canonical_hash,
+        steps     = proof.merkle_path,
+        algorithm = getattr(proof, "merkle_algorithm", None) or LEGACY_SHA256,
+        root_hex  = proof.merkle_root,
+    )

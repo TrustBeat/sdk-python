@@ -9,9 +9,13 @@ All test vectors are derived from the MerkleEngine algorithm:
 import hashlib
 import unittest
 
-from trustbeat._models import AnchorProof, ProofStep
-from trustbeat._verify import verify_proof
-from trustbeat._exceptions import VerificationError
+from trustbeat._models import AnchorProof, ProofStep, _parse_audit_event_proof
+from trustbeat._verify import verify_proof, verify_audit_event_proof
+from trustbeat._exceptions import (
+    IncompleteProofError,
+    UnsupportedAlgorithmError,
+    VerificationError,
+)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -265,3 +269,101 @@ class Rfc6962SharedFixtureTest(unittest.TestCase):
                      tuple((s["sibling"], s["side"]) for s in p["proof_path"]),
                      p["merkle_algorithm"])
         self.assertFalse(_verify(bad))
+
+
+class TestAuditEventProofVerification(unittest.TestCase):
+    """
+    Local verification of audit event proofs, and the compatibility rule that
+    matters most: a proof from a server older than API 1.46 has no merkle_root,
+    and must be reported as "cannot check" rather than "invalid".
+    """
+
+    @staticmethod
+    def _rfc6962_pair():
+        """Two-leaf RFC 6962 tree: returns (leaf_hex, sibling_hex, root_hex)."""
+        a = hashlib.sha256(b"audit-a").digest()
+        b = hashlib.sha256(b"audit-b").digest()
+        la = hashlib.sha256(b"\x00" + a).digest()
+        lb = hashlib.sha256(b"\x00" + b).digest()
+        root = hashlib.sha256(b"\x01" + la + lb).digest()
+        return a.hex(), lb.hex(), root.hex()
+
+    def _proof(self, **over):
+        leaf, sib, root = self._rfc6962_pair()
+        d = {
+            "event_id": "evt_1",
+            "canonical_hash": leaf,
+            "batch_id": "batch_1",
+            "leaf_index": 0,
+            "merkle_path": [{"sibling": sib, "side": "right"}],
+            "anchored_at": "2026-01-01T00:00:00Z",
+            "merkle_root": root,
+            "tree_size": 2,
+            "merkle_algorithm": "rfc6962-sha256",
+        }
+        d.update(over)
+        return _parse_audit_event_proof(d)
+
+    def test_a_valid_rfc6962_audit_proof_verifies(self):
+        self.assertTrue(verify_audit_event_proof(self._proof()))
+
+    def test_a_tampered_root_does_not_verify(self):
+        self.assertFalse(verify_audit_event_proof(self._proof(merkle_root="aa" * 32)))
+
+    def test_a_legacy_audit_proof_verifies_under_the_legacy_fold(self):
+        a = hashlib.sha256(b"audit-a").digest()
+        b = hashlib.sha256(b"audit-b").digest()
+        root = hashlib.sha256(a + b).hexdigest()
+        p = self._proof(
+            canonical_hash=a.hex(),
+            merkle_path=[{"sibling": b.hex(), "side": "right"}],
+            merkle_root=root,
+            merkle_algorithm="trustbeat-legacy-sha256",
+        )
+        self.assertTrue(verify_audit_event_proof(p))
+
+    # ── Compatibility with the API currently in production ──────────────────
+
+    OLD_SERVER_PROOF = {
+        "event_id": "evt_old",
+        "canonical_hash": "ab" * 32,
+        "batch_id": "batch_old",
+        "leaf_index": 0,
+        "merkle_path": [{"sibling": "cd" * 32, "side": "right"}],
+        "anchored_at": "2026-01-01T00:00:00Z",
+        # No merkle_root, no tree_size, no merkle_algorithm — exactly what a
+        # server older than API 1.46 returns.
+    }
+
+    def test_an_old_server_proof_still_parses(self):
+        p = _parse_audit_event_proof(self.OLD_SERVER_PROOF)
+        self.assertEqual(p.event_id, "evt_old")
+        self.assertEqual(p.leaf_index, 0)
+        self.assertEqual(len(p.merkle_path), 1)
+        self.assertIsNone(p.merkle_root)
+        self.assertIsNone(p.tree_size)
+        # Absent means legacy, the same rule as everywhere else.
+        self.assertEqual(p.merkle_algorithm, "trustbeat-legacy-sha256")
+
+    def test_an_old_server_proof_raises_rather_than_reporting_invalid(self):
+        # The whole point: returning False here would tell a customer their
+        # perfectly good audit proof had been tampered with.
+        p = _parse_audit_event_proof(self.OLD_SERVER_PROOF)
+        with self.assertRaises(IncompleteProofError):
+            verify_audit_event_proof(p)
+
+    def test_incomplete_is_not_a_verification_error(self):
+        # Callers distinguishing "bad proof" from "old server" rely on this.
+        p = _parse_audit_event_proof(self.OLD_SERVER_PROOF)
+        try:
+            verify_audit_event_proof(p)
+        except IncompleteProofError as e:
+            self.assertNotIsInstance(e, VerificationError)
+            self.assertIn("merkle_root", str(e))
+        else:
+            self.fail("expected IncompleteProofError")
+
+    def test_an_unknown_algorithm_is_unsupported_not_invalid(self):
+        p = self._proof(merkle_algorithm="sha3-future")
+        with self.assertRaises(UnsupportedAlgorithmError):
+            verify_audit_event_proof(p)

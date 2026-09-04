@@ -126,3 +126,22 @@ except UnsupportedAlgorithmError:
     # This SDK is older than the proof. Upgrade, or check it server-side.
     raise
 ```
+
+### Audit event proofs
+
+`verify_audit_event()` folds an audit event proof the same way:
+
+```python
+from trustbeat import IncompleteProofError
+
+proof = tb.get_audit_event_proof(event_id)
+try:
+    assert tb.verify_audit_event(proof)
+except IncompleteProofError:
+    # The server predates API 1.46 and sent no merkle_root, so there is nothing
+    # to fold against. The proof is not invalid — verify it server-side instead.
+    pass
+```
+
+Treating that exception as a failed proof would be wrong: it means "cannot
+check", not "tampered".

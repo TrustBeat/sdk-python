@@ -600,6 +600,23 @@ class TrustBeat:
         except Exception:
             return None  # 202 pending response (non-JSON or status field)
 
+
+    def verify_audit_event(self, proof: "AuditEventProof") -> bool:
+        """
+        Verify an audit event's Merkle inclusion proof locally.
+
+        Pure Python — no network call. The audit counterpart of :meth:`verify`.
+
+        Returns ``True`` if valid, ``False`` if the proof does not check out.
+
+        Raises :exc:`IncompleteProofError` if the proof has no ``merkle_root``,
+        which is what a server older than API 1.46 returns. That is "cannot
+        check", not "invalid" — verify server-side, or re-fetch from an
+        upgraded server.
+        """
+        from ._verify import verify_audit_event_proof
+        return verify_audit_event_proof(proof)
+
     def list_audit_events(
         self,
         *,

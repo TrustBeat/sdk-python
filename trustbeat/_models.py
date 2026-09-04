@@ -381,6 +381,13 @@ class AuditEventProof:
     leaf_index: int
     merkle_path: list[AuditProofStep]
     anchored_at: str            # ISO 8601
+    # The three below arrived in API 1.46. They are optional because a server
+    # older than that sends none of them, and this SDK must keep working
+    # against it — merkle_root absent is what verify_audit_event_proof()
+    # reports as "cannot check" rather than "invalid".
+    merkle_root: str | None = None
+    tree_size: int | None = None
+    merkle_algorithm: str = LEGACY_SHA256
 
 
 @dataclass
@@ -418,6 +425,9 @@ def _parse_audit_event_proof(d: dict) -> AuditEventProof:
         leaf_index    = d["leaf_index"],
         merkle_path   = [_parse_audit_proof_step(s) for s in d.get("merkle_path", [])],
         anchored_at   = d["anchored_at"],
+        merkle_root   = d.get("merkle_root"),
+        tree_size     = d.get("tree_size"),
+        merkle_algorithm = d.get("merkle_algorithm") or LEGACY_SHA256,
     )
 
 

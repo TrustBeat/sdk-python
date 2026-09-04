@@ -46,6 +46,7 @@ from ._exceptions import (
     RateLimitError,
     VerificationError,
     UnsupportedAlgorithmError,
+    IncompleteProofError,
 )
 
 __all__ = [
@@ -83,6 +84,7 @@ __all__ = [
     "RateLimitError",
     "VerificationError",
     "UnsupportedAlgorithmError",
+    "IncompleteProofError",
     "LEGACY_SHA256",
     "RFC6962_SHA256",
 ]

@@ -224,7 +224,21 @@ def cmd_verify_audit(event_id: str) -> int:
         print(f"verify-audit: {event_id} not returned by list_audit_events", file=sys.stderr)
         return 1
 
-    print(f"OK audit id={event_id} batch={proof.batch_id[:12]}… leaf={proof.leaf_index}")
+    # Actually fold the path. Everything above is structure; this is the only
+    # check that would notice a wrong proof. Servers before API 1.46 send no
+    # merkle_root, so the SDK reports "cannot check" — which is not a failure
+    # of the server under test, and is reported as skipped.
+    from trustbeat import IncompleteProofError
+    try:
+        if not tb.verify_audit_event(proof):
+            print(f"verify-audit: Merkle verification FAILED for {event_id}", file=sys.stderr)
+            return 1
+        verdict = f"verified algo={proof.merkle_algorithm} size={proof.tree_size}"
+    except IncompleteProofError:
+        verdict = "unverifiable (server predates API 1.46)"
+
+    print(f"OK audit id={event_id} batch={proof.batch_id[:12]}… "
+          f"leaf={proof.leaf_index} {verdict}")
     return 0
 
 

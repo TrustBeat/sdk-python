@@ -47,5 +47,17 @@ class UnsupportedAlgorithmError(TrustBeatError):
     """
 
 
+class IncompleteProofError(TrustBeatError):
+    """
+    The proof does not carry the fields needed to check it locally.
+
+    Audit event proofs from servers older than API 1.46 have no ``merkle_root``,
+    so there is nothing to fold the path against. Like
+    ``UnsupportedAlgorithmError`` this is deliberately NOT a ``False`` return:
+    "I cannot check this proof" must not be mistaken for "this proof is forged".
+    Verify server-side via the API, or upgrade the server.
+    """
+
+
 class VerificationError(TrustBeatError):
     """Local Merkle proof verification failed."""
