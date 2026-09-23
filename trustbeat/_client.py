@@ -22,7 +22,27 @@ from ._models import (
 from ._verify import verify_proof
 
 _DEFAULT_BASE_URL = "https://api.trustbeat.eu"
-_SDK_VERSION = "0.4.0"
+_SDK_VERSION = "0.5.0"
+
+#: Most hashes one ``anchor_batch`` call may carry — the API's limit.
+MAX_BATCH_SIZE = 1000
+
+#: A 429 asking to wait longer than this is raised at once rather than slept through.
+_MAX_RETRY_WAIT_SECS = 60.0
+
+
+def _retry_after_secs(exc: urllib.error.HTTPError) -> float | None:
+    """The ``Retry-After`` header in seconds, or None when absent or not a number.
+
+    TrustBeat sends whole seconds; the HTTP-date form is not used, so it falls back to backoff.
+    """
+    value = exc.headers.get("Retry-After") if exc.headers is not None else None
+    if value is None:
+        return None
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        return None
 
 
 class TrustBeat:
@@ -44,12 +64,22 @@ class TrustBeat:
         *,
         base_url: str = _DEFAULT_BASE_URL,
         timeout: float = 30.0,
+        max_retries: int = 2,
     ) -> None:
+        """
+        :param max_retries: How many times a rate-limited (HTTP 429) request is retried,
+            waiting the ``Retry-After`` the server sends (1 s, 2 s, 4 s … if it sends none).
+            ``0`` disables retrying. Only 429 is retried: the API refuses a rate-limited
+            submission before queuing it, so a retry cannot anchor a hash twice.
+        """
         if not api_key:
             raise ValueError("api_key must not be empty")
+        if max_retries < 0:
+            raise ValueError("max_retries must not be negative")
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
+        self._max_retries = max_retries
 
     # ── Anchoring ─────────────────────────────────────────────────────────────
 
@@ -155,7 +185,10 @@ class TrustBeat:
         callback_url: str | None = None,
     ) -> BatchSubmission:
         """
-        Submit up to 100 SHA-256 hashes in a single request.
+        Submit up to 1,000 SHA-256 hashes in a single request.
+
+        The submission is all-or-nothing: if the call fails, none of the hashes was queued.
+        Servers deployed before 2026-09-26 accept at most 100 and answer a larger batch with 400.
 
         Returns a :class:`BatchSubmission` with a ``submission_id`` that groups all
         items. Use :meth:`anchor_batch_wait` to block until all proofs are ready.
@@ -165,8 +198,8 @@ class TrustBeat:
         """
         if not sha256_hashes:
             return BatchSubmission(submission_id="", items=[])
-        if len(sha256_hashes) > 100:
-            raise ValueError("anchor_batch accepts at most 100 hashes per call")
+        if len(sha256_hashes) > MAX_BATCH_SIZE:
+            raise ValueError(f"anchor_batch accepts at most {MAX_BATCH_SIZE} hashes per call")
         items: list[dict[str, Any]] = [
             {"hash": h, "hash_algorithm": "SHA-256"} for h in sha256_hashes
         ]
@@ -845,6 +878,24 @@ class TrustBeat:
 
     # ── Internal HTTP ──────────────────────────────────────────────────────────
 
+    def _urlopen(self, req: urllib.request.Request):
+        """``urlopen``, retrying HTTP 429 up to ``max_retries`` times; any other error propagates."""
+        attempt = 0
+        while True:
+            try:
+                return urllib.request.urlopen(req, timeout=self._timeout)
+            except urllib.error.HTTPError as exc:
+                if exc.code != 429 or attempt >= self._max_retries:
+                    raise
+                wait = _retry_after_secs(exc)
+                if wait is None:
+                    wait = float(2 ** attempt)
+                if wait > _MAX_RETRY_WAIT_SECS:
+                    raise
+                exc.close()
+                time.sleep(wait)
+                attempt += 1
+
     def _request_raw(self, method: str, path: str) -> dict:
         """Like _request but returns raw bytes + content-type for binary responses."""
         url = f"{self._base_url}{path}"
@@ -857,7 +908,7 @@ class TrustBeat:
             },
         )
         try:
-            with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+            with self._urlopen(req) as resp:
                 ct = resp.headers.get("Content-Type", "")
                 body_bytes = resp.read()
                 if ct.startswith("application/zip"):
@@ -889,7 +940,7 @@ class TrustBeat:
             },
         )
         try:
-            with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+            with self._urlopen(req) as resp:
                 return json.loads(resp.read().decode())
         except urllib.error.HTTPError as exc:
             raw = exc.read().decode(errors="replace")
@@ -905,7 +956,9 @@ class TrustBeat:
             if exc.code == 404:
                 raise NotFoundError(msg, status=404, request_id=req_id, error_code=code) from exc
             if exc.code == 429:
-                raise RateLimitError(msg, status=429, request_id=req_id, error_code=code) from exc
+                raise RateLimitError(
+                    msg, status=429, request_id=req_id, error_code=code, retry_after=_retry_after_secs(exc),
+                ) from exc
             if exc.code == 402 or code == "QUOTA_EXCEEDED":
                 raise QuotaError(msg, status=exc.code, request_id=req_id, error_code=code) from exc
             raise TrustBeatError(msg, status=exc.code, request_id=req_id, error_code=code) from exc

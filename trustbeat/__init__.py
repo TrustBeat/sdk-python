@@ -27,7 +27,7 @@ Quick start::
         f.write(proof.token)
 """
 
-from ._client import TrustBeat
+from ._client import MAX_BATCH_SIZE, TrustBeat
 from ._webhook import verify_webhook_signature
 from ._models import (
     AnchorJob, AnchorProof, ProofStep,
@@ -51,6 +51,7 @@ from ._exceptions import (
 
 __all__ = [
     "TrustBeat",
+    "MAX_BATCH_SIZE",
     "verify_webhook_signature",
     # Models
     "AnchorJob",
@@ -89,4 +90,4 @@ __all__ = [
     "RFC6962_SHA256",
 ]
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"

@@ -89,6 +89,27 @@ older than 5 minutes by default (`tolerance_secs` to override).
 Portable proof bundles for offline verification: `export_ai_decision(id)`,
 `export_verification(id)`, `export_log(id)` — each returns raw JSON bundle bytes.
 
+## Batches and rate limits
+
+A batch carries up to **1,000** hashes and is all-or-nothing: if the call fails, none of them
+was queued. (API servers deployed before 26 Sep 2026 accept at most 100.)
+
+Anchoring is rate-limited per account (see your plan). A rate-limited request (HTTP 429) is
+**retried automatically**, waiting the `Retry-After` the server sends — twice by default.
+Retrying is always safe: a refused submission was never queued. When the retries run out you
+get the rate-limit error, carrying the wait the server asked for.
+
+```python
+from trustbeat import TrustBeat, RateLimitError
+
+tb = TrustBeat(api_key="tb_live_...", max_retries=2)   # 0 turns retrying off
+
+try:
+    submission = tb.anchor_batch(hashes)               # up to 1,000
+except RateLimitError as e:
+    print(f"still limited; server asked to wait {e.retry_after} s")
+```
+
 ## Requirements
 
 - Python 3.9+

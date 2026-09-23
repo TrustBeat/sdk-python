@@ -36,12 +36,17 @@ def _fake_response(body: dict):
     return mock
 
 
-def _fake_http_error(status: int, body: dict):
+def _fake_http_error(status: int, body: dict, headers: dict | None = None):
     raw = json.dumps(body).encode()
     return urllib.error.HTTPError(
         url="http://test", code=status, msg="err",
-        hdrs=None, fp=BytesIO(raw),
+        hdrs=headers, fp=BytesIO(raw),
     )
+
+
+def _rate_limited(retry_after: str | None = "1"):
+    headers = {"Retry-After": retry_after} if retry_after is not None else None
+    return _fake_http_error(429, {"error": {"code": "RATE_LIMITED", "message": "Slow down"}}, headers)
 
 
 def _anchor_accepted_payload(tracking_id: str = "track-1") -> dict:
@@ -130,9 +135,19 @@ class TestAnchorBatch(unittest.TestCase):
         self.assertIsInstance(result, BatchSubmission)
         self.assertEqual(result.items, [])
 
-    def test_over_100_hashes_raises_value_error(self):
-        with self.assertRaises(ValueError):
-            TrustBeat(api_key="tb_live_test").anchor_batch(["a" * 64] * 101)
+    def test_over_1000_hashes_raises_value_error_without_request(self):
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            with self.assertRaises(ValueError):
+                TrustBeat(api_key="tb_live_test").anchor_batch(["a" * 64] * 1001)
+            mock_urlopen.assert_not_called()
+
+    @patch("urllib.request.urlopen")
+    def test_1000_hashes_are_sent_in_one_request(self, mock_urlopen):
+        mock_urlopen.return_value = _fake_response({"submission_id": "sub_1", "accepted": [], "total": 1000})
+        TrustBeat(api_key="tb_live_test").anchor_batch(["a" * 64] * 1000)
+        self.assertEqual(mock_urlopen.call_count, 1)
+        body = json.loads(mock_urlopen.call_args[0][0].data)
+        self.assertEqual(len(body["hashes"]), 1000)
 
 
 # ── get_proof() ───────────────────────────────────────────────────────────────
@@ -224,7 +239,7 @@ class TestErrorHandling(unittest.TestCase):
     def test_429_raises_rate_limit_error(self, mock_urlopen):
         mock_urlopen.side_effect = _fake_http_error(429, {"error": {"message": "Slow down"}})
         with self.assertRaises(RateLimitError):
-            TrustBeat(api_key="tb_live_test").anchor("a" * 64)
+            TrustBeat(api_key="tb_live_test", max_retries=0).anchor("a" * 64)
 
     @patch("urllib.request.urlopen")
     def test_500_raises_generic_error_with_status(self, mock_urlopen):
@@ -736,3 +751,78 @@ class TestExportBundles(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ── 429 retry ─────────────────────────────────────────────────────────────────
+
+class TestRateLimitRetry(unittest.TestCase):
+
+    @patch("time.sleep")
+    @patch("urllib.request.urlopen")
+    def test_retries_after_retry_after_then_succeeds(self, mock_urlopen, mock_sleep):
+        mock_urlopen.side_effect = [_rate_limited("3"), _fake_response(_anchor_accepted_payload())]
+        job = TrustBeat(api_key="tb_live_test").anchor("a" * 64)
+        self.assertIsInstance(job, AnchorJob)
+        self.assertEqual(mock_urlopen.call_count, 2)
+        mock_sleep.assert_called_once_with(3.0)
+
+    @patch("time.sleep")
+    @patch("urllib.request.urlopen")
+    def test_gives_up_after_max_retries_with_retry_after_on_the_error(self, mock_urlopen, mock_sleep):
+        mock_urlopen.side_effect = [_rate_limited("2") for _ in range(3)]
+        with self.assertRaises(RateLimitError) as ctx:
+            TrustBeat(api_key="tb_live_test", max_retries=2).anchor("a" * 64)
+        self.assertEqual(mock_urlopen.call_count, 3)      # first try + 2 retries
+        self.assertEqual(mock_sleep.call_count, 2)
+        self.assertEqual(ctx.exception.retry_after, 2.0)
+        self.assertEqual(ctx.exception.status, 429)
+        self.assertEqual(ctx.exception.error_code, "RATE_LIMITED")
+
+    @patch("time.sleep")
+    @patch("urllib.request.urlopen")
+    def test_max_retries_zero_disables_retrying(self, mock_urlopen, mock_sleep):
+        mock_urlopen.side_effect = [_rate_limited("1")]
+        with self.assertRaises(RateLimitError):
+            TrustBeat(api_key="tb_live_test", max_retries=0).anchor("a" * 64)
+        self.assertEqual(mock_urlopen.call_count, 1)
+        mock_sleep.assert_not_called()
+
+    @patch("time.sleep")
+    @patch("urllib.request.urlopen")
+    def test_backs_off_exponentially_without_retry_after(self, mock_urlopen, mock_sleep):
+        mock_urlopen.side_effect = [_rate_limited(None), _rate_limited(None), _fake_response(_anchor_accepted_payload())]
+        TrustBeat(api_key="tb_live_test").anchor("a" * 64)
+        self.assertEqual([c.args[0] for c in mock_sleep.call_args_list], [1.0, 2.0])
+
+    @patch("time.sleep")
+    @patch("urllib.request.urlopen")
+    def test_a_wait_over_60_seconds_is_raised_not_slept(self, mock_urlopen, mock_sleep):
+        mock_urlopen.side_effect = [_rate_limited("120")]
+        with self.assertRaises(RateLimitError) as ctx:
+            TrustBeat(api_key="tb_live_test").anchor("a" * 64)
+        mock_sleep.assert_not_called()
+        self.assertEqual(ctx.exception.retry_after, 120.0)
+
+    @patch("time.sleep")
+    @patch("urllib.request.urlopen")
+    def test_other_errors_are_not_retried(self, mock_urlopen, mock_sleep):
+        # A 5xx may come after the hash was queued; retrying it could anchor it twice.
+        mock_urlopen.side_effect = [_fake_http_error(503, {"error": {"message": "busy"}})]
+        with self.assertRaises(TrustBeatError):
+            TrustBeat(api_key="tb_live_test").anchor("a" * 64)
+        self.assertEqual(mock_urlopen.call_count, 1)
+        mock_sleep.assert_not_called()
+
+    @patch("time.sleep")
+    @patch("urllib.request.urlopen")
+    def test_batch_submissions_are_retried_too(self, mock_urlopen, mock_sleep):
+        mock_urlopen.side_effect = [
+            _rate_limited("1"),
+            _fake_response({"submission_id": "sub_1", "accepted": [], "total": 0}),
+        ]
+        TrustBeat(api_key="tb_live_test").anchor_batch(["a" * 64])
+        self.assertEqual(mock_urlopen.call_count, 2)
+
+    def test_negative_max_retries_is_rejected(self):
+        with self.assertRaises(ValueError):
+            TrustBeat(api_key="tb_live_test", max_retries=-1)

@@ -34,7 +34,18 @@ class QuotaError(TrustBeatError):
 
 
 class RateLimitError(TrustBeatError):
-    """Too many requests (HTTP 429). Back off and retry."""
+    """
+    Too many requests (HTTP 429).
+
+    The client already retries a 429 automatically (see ``max_retries`` on
+    :class:`~trustbeat.TrustBeat`); this is raised once those retries are spent.
+    A refused submission was not queued, so retrying it can never anchor a hash twice.
+    """
+
+    def __init__(self, message: str, *, retry_after: float | None = None, **kwargs):
+        super().__init__(message, **kwargs)
+        #: Seconds the server asked to wait before the next attempt (``Retry-After``), if given.
+        self.retry_after = retry_after
 
 
 class UnsupportedAlgorithmError(TrustBeatError):
