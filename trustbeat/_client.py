@@ -701,8 +701,9 @@ class TrustBeat:
         """
         Export audit events as a court-admissible ZIP package and return the raw bytes.
 
-        The ZIP contains ``events.jsonl``, per-event proof files in ``proofs/``,
-        and a ``VERIFY.md`` offline verification guide.
+        The ZIP contains ``events.jsonl``, a ``batches/<batch_id>/`` directory per
+        anchor batch (Merkle root, RFC 3161 token, per-event inclusion proofs),
+        ``checksums.txt``, verification scripts and a ``VERIFY.md`` offline guide.
 
         This call blocks until the export job completes (typically a few seconds
         for small ledgers, longer for large ones).
