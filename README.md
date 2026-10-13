@@ -96,6 +96,9 @@ open("package.zip", "wb").write(package)
 report = tb.verify_signature_preservation(rec.id, open("now.submission.json").read())
 print(report.result, [(s.step, s.name, s.result) for s in report.steps])
 pdf = tb.verify_signature_preservation_pdf(rec.id, open("now.submission.json").read())
+
+# Delete a record — final; the id is repeated as a guard, and the account is emailed
+tb.delete_signature_preservation(rec.id, confirm=rec.id)
 ```
 
 Verifying later works with the original file only: `trustbeat-signature extract` it again and pass that

@@ -672,6 +672,14 @@ class SignaturePreservationRecord:
 
 
 @dataclass
+class SignaturePreservationDeletion:
+    """A deleted Signature Preservation record. Deletion is final; ``peo_sha256`` stays in its batch's hash tree."""
+    id: str
+    deleted_at: str     # ISO 8601
+    peo_sha256: str
+
+
+@dataclass
 class SignaturePreservationStep:
     """One step of a verification report."""
     step: int
@@ -734,3 +742,7 @@ def _parse_signature_preservation_report(d: dict) -> SignaturePreservationReport
         ],
         raw=d,
     )
+
+
+def _parse_signature_preservation_deletion(d: dict) -> SignaturePreservationDeletion:
+    return SignaturePreservationDeletion(id=d["id"], deleted_at=d["deleted_at"], peo_sha256=d["peo_sha256"])

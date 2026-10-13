@@ -38,6 +38,7 @@ from ._models import (
     LogSource, LogTimeEnvelope, LogSourceIdentity, LogMetadata,
     LogAnchorJob, LogStatus, LogAnchorListItem, LogProof,
     SignaturePreservationRecord, SignaturePreservationStep, SignaturePreservationReport,
+    SignaturePreservationDeletion,
 )
 from ._exceptions import (
     TrustBeatError,
@@ -81,6 +82,7 @@ __all__ = [
     "SignaturePreservationRecord",
     "SignaturePreservationStep",
     "SignaturePreservationReport",
+    "SignaturePreservationDeletion",
     # Exceptions
     "TrustBeatError",
     "AuthError",

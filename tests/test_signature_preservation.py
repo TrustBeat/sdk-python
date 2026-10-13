@@ -134,3 +134,26 @@ class SignaturePreservationTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    @patch("urllib.request.urlopen")
+    def test_delete_sends_the_confirmation_and_maps_the_result(self, urlopen):
+        urlopen.return_value = _response({"id": "01REC", "deleted_at": "2026-10-13T11:00:00Z", "peo_sha256": "d" * 64})
+        d = self.tb.delete_signature_preservation("01REC", confirm="01REC")
+        req = urlopen.call_args[0][0]
+        self.assertEqual(req.get_method(), "DELETE")
+        self.assertTrue(req.full_url.endswith("/v1/signature-preservation/01REC?confirm=01REC"))
+        self.assertEqual((d.id, d.deleted_at, d.peo_sha256), ("01REC", "2026-10-13T11:00:00Z", "d" * 64))
+
+    @patch("urllib.request.urlopen")
+    def test_delete_without_matching_confirmation_raises_with_the_code(self, urlopen):
+        urlopen.side_effect = _http_error(400, {"error": {"code": "CONFIRMATION_REQUIRED", "message": "Repeat the id"}})
+        with self.assertRaises(TrustBeatError) as cm:
+            self.tb.delete_signature_preservation("01REC", confirm="01OTHER")
+        self.assertEqual(cm.exception.error_code, "CONFIRMATION_REQUIRED")
+
+    @patch("urllib.request.urlopen")
+    def test_delete_unknown_record_is_not_found(self, urlopen):
+        urlopen.side_effect = _http_error(404, {"error": {"code": "NOT_FOUND", "message": "Record not found."}})
+        with self.assertRaises(NotFoundError):
+            self.tb.delete_signature_preservation("nope", confirm="nope")
+

@@ -21,6 +21,7 @@ from ._models import (
     _parse_verification_report, _parse_verification_job, _parse_cert_validation_result,
     SignaturePreservationRecord, SignaturePreservationReport,
     _parse_signature_preservation_record, _parse_signature_preservation_report,
+    _parse_signature_preservation_deletion, SignaturePreservationDeletion,
 )
 from ._verify import verify_proof
 
@@ -929,6 +930,21 @@ class TrustBeat:
         """
         raw = self._request_raw("GET", f"/v1/signature-preservation/{urllib.parse.quote(record_id, safe='')}/package")
         return raw["body"]
+
+    def delete_signature_preservation(self, record_id: str, *, confirm: str) -> SignaturePreservationDeletion:
+        """
+        Delete a record before the end of its preservation period. **Final**: the Preservation Evidence
+        Object, the signatures and the record are removed and its evidence record is no longer served;
+        download the package first if you may need it. The account's email address is notified.
+
+        :param confirm: The record id again — a guard against deleting the wrong record.
+        :raises TrustBeatError: ``CONFIRMATION_REQUIRED`` (HTTP 400) when ``confirm`` differs from ``record_id``.
+        :raises NotFoundError: Unknown on this account, already deleted (or the product is not available yet).
+        """
+        q = urllib.parse.quote
+        data = self._request(
+            "DELETE", f"/v1/signature-preservation/{q(record_id, safe='')}?confirm={q(confirm, safe='')}")
+        return _parse_signature_preservation_deletion(data)
 
     def verify_signature_preservation(
         self, record_id: str, submission: str | bytes | dict,
