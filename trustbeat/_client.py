@@ -7,6 +7,7 @@ import json
 import os
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any
 
@@ -18,6 +19,8 @@ from ._models import (
     _parse_anchor_job, _parse_proof, _parse_batch_submission, _parse_batch_status,
     _parse_ai_decision_job, _parse_ai_decision_proof,
     _parse_verification_report, _parse_verification_job, _parse_cert_validation_result,
+    SignaturePreservationRecord, SignaturePreservationReport,
+    _parse_signature_preservation_record, _parse_signature_preservation_report,
 )
 from ._verify import verify_proof
 
@@ -877,6 +880,77 @@ class TrustBeat:
             payload, signature_header, secret, tolerance_secs=tolerance_secs
         )
 
+    # ── Signature Preservation (not yet available: the API answers 404 until launch) ──
+
+    def preserve_signatures(
+        self,
+        submission: str | bytes | dict,
+        *,
+        client_ref: str | None = None,
+    ) -> SignaturePreservationRecord:
+        """
+        Preserve the signatures of a signed file.
+
+        ``submission`` is the JSON that ``trustbeat-signature extract <file>`` writes — as text, bytes
+        or an already parsed ``dict``. It holds the signatures and the digests binding them to the file;
+        the signed file itself never reaches TrustBeat, and this SDK does not read signed files.
+        Counts as one anchor against the monthly quota.
+
+        :param client_ref: Your own reference for the record (at most 256 characters).
+        :raises TrustBeatError: ``INVALID_SUBMISSION`` (HTTP 400) when the submission does not add up.
+        :raises QuotaError: Free plan quota reached.
+        """
+        body = _submission(submission)
+        path = "/v1/signature-preservation"
+        if client_ref is not None:
+            path += "?client_ref=" + urllib.parse.quote(client_ref, safe="")
+        return _parse_signature_preservation_record(self._request("POST", path, body))
+
+    def get_signature_preservation(self, record_id: str) -> SignaturePreservationRecord:
+        """
+        One preserved signed file, with its signatures and their EU DSS findings.
+
+        :raises NotFoundError: Unknown on this account (or the product is not available yet).
+        """
+        data = self._request("GET", f"/v1/signature-preservation/{urllib.parse.quote(record_id, safe='')}")
+        return _parse_signature_preservation_record(data)
+
+    def list_signature_preservations(self, *, limit: int | None = None) -> list[SignaturePreservationRecord]:
+        """The account's preserved signed files, newest first (without their signatures)."""
+        path = "/v1/signature-preservation" + (f"?limit={int(limit)}" if limit is not None else "")
+        return [_parse_signature_preservation_record(r) for r in self._request("GET", path).get("records", [])]
+
+    def download_signature_preservation_package(self, record_id: str) -> bytes:
+        """
+        The record's package (ZIP) for verification without TrustBeat: the Preservation Evidence Object,
+        signatures, validation data, trusted lists and — once made — the RFC 4998 evidence record.
+        Keep it next to the original file; ``trustbeat-signature verify <file> --package <zip>`` checks
+        both offline.
+        """
+        raw = self._request_raw("GET", f"/v1/signature-preservation/{urllib.parse.quote(record_id, safe='')}/package")
+        return raw["body"]
+
+    def verify_signature_preservation(
+        self, record_id: str, submission: str | bytes | dict,
+    ) -> SignaturePreservationReport:
+        """
+        Verify a signed file presented now against its preservation record: the eight-step report.
+
+        ``submission`` is ``trustbeat-signature extract`` of the file presented now. A file that does not
+        match gives a report with failed steps, not an exception. Does not count against the quota.
+        """
+        data = self._request("POST", self._verify_path(record_id), _submission(submission))
+        return _parse_signature_preservation_report(data)
+
+    def verify_signature_preservation_pdf(self, record_id: str, submission: str | bytes | dict) -> bytes:
+        """The same report as :meth:`verify_signature_preservation`, as a PDF document."""
+        raw = self._request_raw("POST", self._verify_path(record_id) + "?format=pdf", _submission(submission))
+        return raw["body"]
+
+    @staticmethod
+    def _verify_path(record_id: str) -> str:
+        return f"/v1/signature-preservation/{urllib.parse.quote(record_id, safe='')}/verify"
+
     # ── Internal HTTP ──────────────────────────────────────────────────────────
 
     def _urlopen(self, req: urllib.request.Request):
@@ -897,22 +971,26 @@ class TrustBeat:
                 time.sleep(wait)
                 attempt += 1
 
-    def _request_raw(self, method: str, path: str) -> dict:
+    def _request_raw(self, method: str, path: str, body: dict | None = None) -> dict:
         """Like _request but returns raw bytes + content-type for binary responses."""
         url = f"{self._base_url}{path}"
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "User-Agent": f"trustbeat-python/{_SDK_VERSION}",
+        }
+        if body is not None:
+            headers["Content-Type"] = "application/json"
         req = urllib.request.Request(
             url,
+            data=json.dumps(body).encode() if body is not None else None,
             method=method,
-            headers={
-                "Authorization": f"Bearer {self._api_key}",
-                "User-Agent": f"trustbeat-python/{_SDK_VERSION}",
-            },
+            headers=headers,
         )
         try:
             with self._urlopen(req) as resp:
                 ct = resp.headers.get("Content-Type", "")
                 body_bytes = resp.read()
-                if ct.startswith("application/zip"):
+                if ct.startswith("application/zip") or ct.startswith("application/pdf"):
                     return {"content_type": ct, "body": body_bytes}
                 return {"content_type": ct, "body": body_bytes, "json": json.loads(body_bytes.decode())}
         except urllib.error.HTTPError as exc:
@@ -963,3 +1041,16 @@ class TrustBeat:
             if exc.code == 402 or code == "QUOTA_EXCEEDED":
                 raise QuotaError(msg, status=exc.code, request_id=req_id, error_code=code) from exc
             raise TrustBeatError(msg, status=exc.code, request_id=req_id, error_code=code) from exc
+
+
+def _submission(submission: str | bytes | dict) -> dict:
+    """The extractor's submission JSON as a dict; text and bytes are parsed, nothing else is changed."""
+    if isinstance(submission, dict):
+        return submission
+    if isinstance(submission, bytes):
+        submission = submission.decode("utf-8")
+    parsed = json.loads(submission)
+    if not isinstance(parsed, dict):
+        raise ValueError("a submission is a JSON object, as written by `trustbeat-signature extract`")
+    return parsed
+

@@ -641,3 +641,96 @@ def _log_metadata_to_dict(m: LogMetadata) -> dict:
     if m.time_envelope is not None:
         out["time_envelope"] = {"start_at": m.time_envelope.start_at, "end_at": m.time_envelope.end_at}
     return out
+
+
+# ── Signature Preservation ────────────────────────────────────────────────────
+
+
+@dataclass
+class SignaturePreservationRecord:
+    """
+    A preserved signed file (``/v1/signature-preservation``).
+
+    ``status`` is ``"pending"`` (queued for the next anchoring cycle), ``"anchored"`` (its RFC 4998
+    evidence record is being made) or ``"preserved"`` (the evidence record exists). ``signatures``
+    is ``None`` in a list; each entry is the API's object (signer, EU DSS indication, qualification).
+    """
+    id: str
+    status: str
+    created_at: str               # ISO 8601
+    container_format: str         # PAdES | XAdES | CAdES | ASiC-E | ASiC-S
+    container_name: str
+    container_sha256: str
+    signature_count: int
+    peo_sha256: str               # SHA-256 of the Preservation Evidence Object — the anchored leaf
+    profile: str
+    preserve_until: str           # ISO 8601
+    evidence_record_status: str   # "pending" | "ready"
+    client_ref: str | None = None
+    evidence_record_url: str | None = None
+    signatures: list[dict] | None = None
+
+
+@dataclass
+class SignaturePreservationStep:
+    """One step of a verification report."""
+    step: int
+    name: str           # file | binding | signature | chain | timestamps | qualification | evidence-record
+    title: str
+    result: str         # passed | failed | indeterminate | not-applicable
+    checked_by: list[str]
+    details: list[str]
+
+
+@dataclass
+class SignaturePreservationReport:
+    """
+    The verification report of ``POST /v1/signature-preservation/{id}/verify``.
+
+    ``result`` is ``"passed"``, ``"failed"`` (a step failed) or ``"indeterminate"`` (a step could not
+    be decided). ``raw`` is the full JSON report (signatures now and at preservation, evidence-record
+    time-stamps).
+    """
+    record_id: str
+    result: str
+    claim: str
+    steps: list[SignaturePreservationStep]
+    raw: dict
+
+
+def _parse_signature_preservation_record(d: dict) -> SignaturePreservationRecord:
+    c = d.get("container", {})
+    p = d.get("preservation", {})
+    e = d.get("evidence_record", {})
+    return SignaturePreservationRecord(
+        id=d["id"],
+        status=d["status"],
+        created_at=d["created_at"],
+        container_format=c.get("format", ""),
+        container_name=c.get("name", ""),
+        container_sha256=c.get("sha256", ""),
+        signature_count=d.get("signature_count", 0),
+        peo_sha256=d.get("peo", {}).get("sha256", ""),
+        profile=p.get("profile", ""),
+        preserve_until=p.get("preserve_until", ""),
+        evidence_record_status=e.get("status", "pending"),
+        client_ref=d.get("client_ref"),
+        evidence_record_url=e.get("download_url"),
+        signatures=d.get("signatures"),
+    )
+
+
+def _parse_signature_preservation_report(d: dict) -> SignaturePreservationReport:
+    return SignaturePreservationReport(
+        record_id=d["record_id"],
+        result=d["result"],
+        claim=d.get("claim", ""),
+        steps=[
+            SignaturePreservationStep(
+                step=s["step"], name=s["name"], title=s.get("title", ""), result=s["result"],
+                checked_by=list(s.get("checked_by", [])), details=list(s.get("details", [])),
+            )
+            for s in d.get("steps", [])
+        ],
+        raw=d,
+    )

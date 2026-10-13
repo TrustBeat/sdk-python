@@ -69,6 +69,39 @@ assert proof.verification_status == "VERIFIED"
 assert tb.verify(proof.proof)
 ```
 
+## Signature Preservation (not yet available)
+
+> **Not yet available** — the API answers `404` until the product is launched.
+
+Preserves the electronic signatures of a signed file (PAdES, XAdES, CAdES, ASiC-E, ASiC-S) for 30
+years. **The signed file never reaches TrustBeat, and this SDK does not read it:** the
+`trustbeat-signature` extractor reads it on your machine and writes a submission JSON (the signatures and the digests that
+bind them to the file), which the SDK sends unchanged.
+
+```bash
+trustbeat-signature extract contract.pdf --out contract.submission.json
+```
+
+```python
+submission = open("contract.submission.json").read()
+
+rec = tb.preserve_signatures(submission, client_ref="contract-17")   # one anchor against the quota
+rec = tb.get_signature_preservation(rec.id)       # status: pending -> anchored -> preserved
+recs = tb.list_signature_preservations(limit=50)
+
+package = tb.download_signature_preservation_package(rec.id)   # ZIP for offline verification
+open("package.zip", "wb").write(package)
+
+# Years later: the file presented now, extracted again
+report = tb.verify_signature_preservation(rec.id, open("now.submission.json").read())
+print(report.result, [(s.step, s.name, s.result) for s in report.steps])
+pdf = tb.verify_signature_preservation_pdf(rec.id, open("now.submission.json").read())
+```
+
+Verifying later works with the original file only: `trustbeat-signature extract` it again and pass that
+submission. A file that does not match is a report with failed steps, not an error. Offline, without
+TrustBeat: `trustbeat-signature verify contract.pdf --package package.zip`.
+
 ## Webhooks
 
 If your account has a webhook secret configured, every delivery is signed with
