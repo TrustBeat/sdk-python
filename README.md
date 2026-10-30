@@ -85,7 +85,7 @@ trustbeat-signature extract contract.pdf --out contract.submission.json
 ```python
 submission = open("contract.submission.json").read()
 
-rec = tb.preserve_signatures(submission, client_ref="contract-17")   # one anchor against the quota
+rec = tb.preserve_signatures(submission, client_ref="contract-17")   # one preserved file of your Signature Preservation plan
 rec = tb.get_signature_preservation(rec.id)       # status: pending -> anchored -> preserved
 recs = tb.list_signature_preservations(limit=50)
 
@@ -104,6 +104,12 @@ tb.delete_signature_preservation(rec.id, confirm=rec.id)
 Verifying later works with the original file only: `trustbeat-signature extract` it again and pass that
 submission. A file that does not match is a report with failed steps, not an error. Offline, without
 TrustBeat: `trustbeat-signature verify contract.pdf --package package.zip`.
+
+Preserving needs a Signature Preservation subscription (Starter €19 / month for 100 files, Business €299 /
+month for 2,000; no free trial). Without one the call fails with HTTP 402 — `QuotaError`, whose message
+says `SUBSCRIPTION_REQUIRED` and gives the billing link. Over the monthly allowance the file is still preserved
+and billed per file. It does not use Document Anchoring quota, and reading, downloading, verifying and
+deleting records never need a plan.
 
 ## Webhooks
 
