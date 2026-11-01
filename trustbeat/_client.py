@@ -881,7 +881,7 @@ class TrustBeat:
             payload, signature_header, secret, tolerance_secs=tolerance_secs
         )
 
-    # ── Signature Preservation (not yet available: the API answers 404 until launch) ──
+    # ── Signature Preservation ──
 
     def preserve_signatures(
         self,
@@ -912,7 +912,7 @@ class TrustBeat:
         """
         One preserved signed file, with its signatures and their EU DSS findings.
 
-        :raises NotFoundError: Unknown on this account (or the product is not available yet).
+        :raises NotFoundError: Unknown on this account.
         """
         data = self._request("GET", f"/v1/signature-preservation/{urllib.parse.quote(record_id, safe='')}")
         return _parse_signature_preservation_record(data)
@@ -940,7 +940,7 @@ class TrustBeat:
 
         :param confirm: The record id again — a guard against deleting the wrong record.
         :raises TrustBeatError: ``CONFIRMATION_REQUIRED`` (HTTP 400) when ``confirm`` differs from ``record_id``.
-        :raises NotFoundError: Unknown on this account, already deleted (or the product is not available yet).
+        :raises NotFoundError: Unknown on this account, or already deleted.
         """
         q = urllib.parse.quote
         data = self._request(

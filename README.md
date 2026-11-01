@@ -69,9 +69,7 @@ assert proof.verification_status == "VERIFIED"
 assert tb.verify(proof.proof)
 ```
 
-## Signature Preservation (not yet available)
-
-> **Not yet available** — the API answers `404` until the product is launched.
+## Signature Preservation
 
 Preserves the electronic signatures of a signed file (PAdES, XAdES, CAdES, ASiC-E, ASiC-S) for 30
 years. **The signed file never reaches TrustBeat, and this SDK does not read it:** the
