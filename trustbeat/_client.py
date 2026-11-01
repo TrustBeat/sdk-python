@@ -26,7 +26,7 @@ from ._models import (
 from ._verify import verify_proof
 
 _DEFAULT_BASE_URL = "https://api.trustbeat.eu"
-_SDK_VERSION = "0.5.0"
+_SDK_VERSION = "0.6.0"
 
 #: Most hashes one ``anchor_batch`` call may carry — the API's limit.
 MAX_BATCH_SIZE = 1000
